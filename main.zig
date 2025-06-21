@@ -15,79 +15,84 @@
 
 const std = @import("std");
 
-const BuildVTable = @import("interface.zig").BuildVTable;
-const GenerateClass = @import("interface.zig").GenerateClass;
+const interface = @import("interface.zig");
 
 fn ShapeInterface(comptime SelfType: type) type {
     return struct {
         pub const Self = SelfType;
 
         pub fn draw(self: *const Self) void {
-            return self._vtable.draw(self._ptr, .{});
+            return self._vtable.draw.?(self._ptr, .{});
         }
 
         pub fn area(self: *const Self) u32 {
-            return self._vtable.area(self._ptr, .{});
+            return self._vtable.area.?(self._ptr, .{});
         }
 
         pub fn set_size(self: *Self, new_size: u32) void {
-            return self._vtable.set_size(self._ptr, .{new_size});
+            return self._vtable.set_size.?(self._ptr, .{new_size});
         }
     };
 }
 
-const Shape = struct {
-    _vtable: *const VTable,
-    _ptr: *anyopaque,
+// ShapeInterface methods are pure virtual, derive them in the childs
+const IShape = interface.ConstructInterface(ShapeInterface);
 
-    pub const VTable = BuildVTable(ShapeInterface);
-    pub usingnamespace GenerateClass(ShapeInterface(Shape));
-};
-
-const Triangle = struct {
+const Triangle = packed struct {
+    pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
     size: u32,
 
     pub fn draw(self: *const Triangle) void {
-        std.debug.print("Drawing triangle with size: {}\n", .{self.size});
+        std.debug.print("Triangle.draw: {d}\n", .{self.size});
     }
 
     pub fn area(self: *const Triangle) u32 {
+        std.debug.print("Triangle.area: {d}\n", .{self.size});
         return self.size << 2;
     }
 
     pub fn set_size(self: *Triangle, new_size: u32) void {
+        std.debug.print("Triangle.set_size: {d}->{d}\n", .{ self.size, new_size });
         self.size = new_size;
     }
-
-    pub fn ishape(self: *Triangle) Shape {
-        return Shape.init(self);
-    }
-
-    // pub usingnamespace DeriveInterface(Shape, Triangle);
 };
 
-const Rectangle = struct {
+const Rectangle = packed struct {
+    pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
     size: u32,
 
     pub fn draw(self: *const Rectangle) void {
-        std.debug.print("Drawing rectangle with size: {}\n", .{self.size});
+        std.debug.print("Rectangle.draw: {d}\n", .{self.size});
     }
 
     pub fn area(self: *const Rectangle) u32 {
+        std.debug.print("Rectangle.area: {d}\n", .{self.size});
         return self.size + 10000;
     }
 
-    pub fn set_size(self: *Rectangle, a: u32) void {
-        self.size = a;
+    pub fn set_size(self: *Rectangle, new_size: u32) void {
+        std.debug.print("Rectangle.set_size: {d}->{d}\n", .{ self.size, new_size });
+        self.size = new_size;
     }
-
-    pub fn ishape(self: *Rectangle) Shape {
-        return Shape.init(self);
-    }
-    // pub usingnamespace DeriveInterface(Shape, Rectangle);
 };
 
-pub fn process(triangle: *Shape) void {
+const Square = packed struct {
+    pub usingnamespace interface.DeriveFromBase(Rectangle, Square);
+    base: Rectangle, // this will ensure correct type casting
+    name: [*:0]const u8,
+    other_field: u92 = 0,
+
+    pub fn draw(self: *const @This()) void {
+        std.debug.print("Square.draw[{s}]: {d}\n", .{ self.name, self.base.size });
+    }
+
+    pub fn set_size(self: *@This(), a: u32) void {
+        std.debug.print("Square.set_size[{s}]: {d}->{d} : {d}\n", .{ self.name, self.base.size, a, self.other_field });
+        self.base.size = a;
+    }
+};
+
+pub fn process(triangle: *IShape) void {
     std.debug.print("-------    Processing     -------\n", .{});
     triangle.draw();
     std.debug.print("shape.area: {}\n", .{triangle.area()});
@@ -100,14 +105,30 @@ pub fn process(triangle: *Shape) void {
 pub fn main() void {
     std.debug.print("Testing shape interface!\n", .{});
 
-    // @compileLog("Shape Interface: ", @TypeOf(A.a));
-    // @compileLog("Shape Interface: ", prune_type(@typeInfo(@TypeOf(A.a)).@"fn"));
     var triangle = Triangle{ .size = 5 };
     var rectangle = Rectangle{ .size = 15 };
-    var shape1 = triangle.ishape();
-    var shape2 = rectangle.ishape();
+    var square = Square{
+        .base = Rectangle{
+            .size = 20,
+        },
+        .name = "Square1",
+        .other_field = 42,
+    };
+    var square2 = Square{
+        .base = Rectangle{
+            .size = 20,
+        },
+        .name = "Square2",
+        .other_field = 84,
+    };
+
+    var shape1 = triangle.interface();
+    var shape2 = rectangle.interface();
+    var shape3 = square.interface();
+    var shape4 = square2.interface();
+
     process(&shape1);
     process(&shape2);
-    // ishape.set_size(20);
-    // process(&rectangle);
+    process(&shape3);
+    process(&shape4);
 }

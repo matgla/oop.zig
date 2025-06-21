@@ -15,16 +15,6 @@
 
 const std = @import("std");
 
-fn gen_pure_virtual_call(comptime ArgsType: anytype) type {
-    return struct {
-        fn call(ptr: *const anyopaque, args: ArgsType) void {
-            _ = ptr;
-            _ = args;
-            @panic("Pure virtual function call");
-        }
-    };
-}
-
 fn deduce_type(info: anytype, object_type: anytype) type {
     if (info.pointer.is_const) {
         return *const object_type;
@@ -37,20 +27,6 @@ fn prune_type_info(info: anytype) type {
         return *const anyopaque;
     }
     return *anyopaque;
-}
-
-fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
-    return struct {
-        const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
-        const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
-        const SelfType = Params[0].type.?;
-
-        fn call(ptr: prune_type_info(@typeInfo(SelfType)), call_params: get_vcall_args(ArgsType)) RetType {
-            std.debug.assert(@typeInfo(SelfType) == .pointer);
-            const self: SelfType = @ptrCast(@alignCast(ptr));
-            return @call(.auto, @field(Type, name), .{self} ++ call_params);
-        }
-    };
 }
 
 fn get_vcall_args(comptime fun: anytype) type {
@@ -72,7 +48,7 @@ fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type
     const Type = prune_type_info(@typeInfo(SelfType));
     const ReturnType = @typeInfo(@TypeOf(Method)).@"fn".return_type.?;
     const TupleArgs = get_vcall_args(Method);
-    const FinalType = *const fn (ptr: Type, args: TupleArgs) ReturnType;
+    const FinalType = ?*const fn (ptr: Type, args: TupleArgs) ReturnType;
     return .{
         .name = name,
         .type = FinalType,
@@ -98,22 +74,50 @@ pub fn BuildVTable(comptime InterfaceType: anytype) type {
     } });
 }
 
+fn pure_virtual_function() void {
+    @panic("Pure virtual function called");
+}
+
+fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
+    return struct {
+        const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
+        const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
+        const SelfType = Params[0].type.?;
+
+        fn call(ptr: prune_type_info(@typeInfo(SelfType)), call_params: get_vcall_args(ArgsType)) RetType {
+            std.debug.assert(@typeInfo(SelfType) == .pointer);
+            const self: SelfType = @ptrCast(@alignCast(ptr));
+            return @call(.auto, @field(Type, name), .{self} ++ call_params);
+        }
+    };
+}
+
 pub fn GenerateClass(comptime InterfaceType: type) type {
     return struct {
-        fn build_vtable(comptime Self: anytype) InterfaceType.Self.VTable {
+        fn build_vtable_chain(chain: []const type) InterfaceType.Self.VTable {
             var vtable: InterfaceType.Self.VTable = undefined;
-
-            inline for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
-                const field_type = @field(Self, field.name);
-                const vcall = gen_vcall(Self, field_type, field.name);
-                @field(vtable, field.name) = vcall.call;
+            var index: isize = chain.len - 1;
+            while (index >= 0) : (index -= 1) {
+                const base = chain[index];
+                for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
+                    if (!std.meta.hasMethod(base, field.name)) {
+                        if (@field(vtable, field.name) == null) {
+                            @field(vtable, field.name) = @ptrCast(&pure_virtual_function);
+                        }
+                    } else {
+                        const field_type = @field(base, field.name);
+                        const vcall = gen_vcall(base, field_type, field.name);
+                        @field(vtable, field.name) = vcall.call;
+                    }
+                }
             }
             return vtable;
         }
-        pub fn init(ptr: anytype) InterfaceType.Self {
+
+        pub fn init_chain(ptr: anytype, chain: []const type) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
-                const vtable = build_vtable(Self);
+                const vtable = build_vtable_chain(chain);
             };
             return InterfaceType.Self{
                 ._vtable = &gen_vtable.vtable,
@@ -121,5 +125,77 @@ pub fn GenerateClass(comptime InterfaceType: type) type {
             };
         }
         pub usingnamespace InterfaceType;
+    };
+}
+
+pub fn ConstructInterface(comptime SelfType: anytype) type {
+    return struct {
+        pub const Self = @This();
+        pub const VTable = BuildVTable(SelfType);
+        pub const IsInterface = true;
+        pub const Base: ?type = null;
+        _vtable: *const VTable,
+        _ptr: *anyopaque,
+
+        pub usingnamespace GenerateClass(SelfType(@This()));
+    };
+}
+
+fn deduce_interface(comptime Base: type) type {
+    comptime var base: type = Base;
+    while (true) {
+        if (base.Base == null) {
+            return base;
+        }
+        base = Base.Base.?;
+    }
+    return Base;
+}
+
+fn build_inheritance_chain(comptime Base: type, comptime Derived: type) []const type {
+    comptime var chain: []const type = &.{};
+
+    const arg: []const type = &.{Derived};
+    chain = chain ++ arg;
+
+    var current: ?type = Base;
+
+    while (current != null) {
+        const a: []const type = &.{current.?};
+        chain = chain ++ a;
+        current = current.?.Base;
+    }
+
+    return chain;
+}
+
+pub fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type {
+    return struct {
+        pub const Base: type = chain[chain.len - 1];
+        pub fn interface(ptr: *Derived) Base {
+            return Base.init_chain(ptr, chain[0 .. chain.len - 1]);
+        }
+    };
+}
+
+pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
+    comptime if (!@hasDecl(Base, "IsInterface")) { // ensure we have base member
+        if (!@hasField(Derived, "base")) {
+            @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
+        }
+    };
+    return struct {
+        pub usingnamespace DeriveFromChain(build_inheritance_chain(Base, Derived), Derived);
+    };
+}
+
+fn addDecl(comptime T: type, d: anytype) std.builtin.Type.StructField {
+    const F = @TypeOf(@field(T, d.name));
+    return .{
+        .name = d.name,
+        .type = F,
+        .default_value_ptr = @field(T, d.name),
+        .is_comptime = true,
+        .alignment = @alignOf(F),
     };
 }
