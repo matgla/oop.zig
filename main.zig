@@ -33,8 +33,9 @@ fn prune_type_info(info: anytype) type {
     return *anyopaque;
 }
 
-fn gen_vcall(Type: type, ArgsType: anytype, RetType: type, name: []const u8) type {
+fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
     return struct {
+        const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
         const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
         const SelfType = Params[0].type.?;
 
@@ -61,17 +62,28 @@ fn get_vcall_args(comptime fun: anytype) type {
 
 fn decorate(comptime InterfaceType: type) type {
     return struct {
+        fn build_vtable(comptime Self: anytype) InterfaceType.Self.VTable {
+            var vtable: InterfaceType.Self.VTable = undefined;
+
+            inline for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
+                const field_type = @field(Self, field.name);
+                const vcall = gen_vcall(Self, field_type, field.name);
+                @field(vtable, field.name) = vcall.call;
+            }
+            return vtable;
+        }
         pub fn init(ptr: anytype) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
-                const vtable = InterfaceType.Self.VTable{
-                    .draw = gen_draw,
-                    .area = gen_area,
-                    .set_size = gen_set_size,
-                };
-                const gen_draw = gen_vcall(@TypeOf(ptr.*), Self.draw, void, "draw").call;
-                const gen_area = gen_vcall(@TypeOf(ptr.*), Self.area, u32, "area").call;
-                const gen_set_size = gen_vcall(@TypeOf(ptr.*), Self.set_size, void, "set_size").call;
+                // const vtable = InterfaceType.Self.VTable{
+                // .draw = gen_draw,
+                // .area = gen_area,
+                // .set_size = gen_set_size,
+                // };
+                const vtable = build_vtable(Self);
+                // const gen_draw = gen_vcall(@TypeOf(ptr.*), Self.draw, void, "draw").call;
+                // const gen_area = gen_vcall(@TypeOf(ptr.*), Self.area, u32, "area").call;
+                // const gen_set_size = gen_vcall(@TypeOf(ptr.*), Self.set_size, void, "set_size").call;
             };
             return InterfaceType.Self{
                 ._vtable = &gen_vtable.vtable,
@@ -85,6 +97,7 @@ fn decorate(comptime InterfaceType: type) type {
 fn ShapeInterface(comptime SelfType: type) type {
     return struct {
         const Self = SelfType;
+
         pub fn draw(self: Self) void {
             return self._vtable.draw(self._ptr, .{});
         }
