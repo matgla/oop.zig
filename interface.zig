@@ -183,6 +183,16 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
         if (!@hasField(Derived, "base")) {
             @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
         }
+        // I think should check also all parents, not only direct base
+        var base: ?type = Base;
+        while (base != null) {
+            for (std.meta.fields(Derived)) |field| {
+                if (@hasField(base.?, field.name)) {
+                    @compileError("Field already exists in the base: " ++ field.name);
+                }
+            }
+            base = base.?.Base;
+        }
     };
     return struct {
         pub usingnamespace DeriveFromChain(build_inheritance_chain(Base, Derived), Derived);
