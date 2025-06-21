@@ -15,112 +15,111 @@
 
 const std = @import("std");
 
-fn addDecl(comptime interface: anytype, d: anytype) std.builtin.Type.StructField {
-    const FieldType = @TypeOf(@field(interface, d.name));
-    return .{
-        .name = d.name,
-        .type = FieldType,
-        .default_value_ptr = @field(interface, d.name),
-        .is_comptime = true,
-        .alignment = @alignOf(FieldType),
+fn gen_pure_virtual_call(comptime ArgsType: anytype) type {
+    return struct {
+        fn call(ptr: *const anyopaque, args: ArgsType) void {
+            _ = ptr;
+            _ = args;
+            @panic("Pure virtual function call");
+        }
     };
 }
 
-fn genDecl(comptime obj: anytype, name: [:0]const u8) std.builtin.Type.StructField {
-    const FieldType = @TypeOf(obj);
+fn deduce_type(info: anytype, object_type: anytype) type {
+    if (info.pointer.is_const) {
+        return *const object_type;
+    }
+    return *object_type;
+}
+
+fn prune_type_info(info: anytype) type {
+    if (info.pointer.is_const) {
+        return *const anyopaque;
+    }
+    return *anyopaque;
+}
+
+fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
+    return struct {
+        const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
+        const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
+        const SelfType = Params[0].type.?;
+
+        fn call(ptr: prune_type_info(@typeInfo(SelfType)), call_params: get_vcall_args(ArgsType)) RetType {
+            std.debug.assert(@typeInfo(SelfType) == .pointer);
+            const self: SelfType = @ptrCast(@alignCast(ptr));
+            return @call(.auto, @field(Type, name), .{self} ++ call_params);
+        }
+    };
+}
+
+fn get_vcall_args(comptime fun: anytype) type {
+    const params = @typeInfo(@TypeOf(fun)).@"fn".params;
+    if (params.len == 0) {
+        return .{};
+    }
+    comptime var args: []const type = &.{}; // The first parameter is always the object pointer
+    for (params[1..]) |param| {
+        const arg: []const type = &.{param.type.?};
+        args = args ++ arg;
+    }
+    return std.meta.Tuple(args);
+}
+
+fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type.StructField {
+    const MethodType = @TypeOf(Method);
+    const SelfType = @typeInfo(MethodType).@"fn".params[0].type.?;
+    const Type = prune_type_info(@typeInfo(SelfType));
+    const ReturnType = @typeInfo(@TypeOf(Method)).@"fn".return_type.?;
+    const TupleArgs = get_vcall_args(Method);
+    const FinalType = *const fn (ptr: Type, args: TupleArgs) ReturnType;
     return .{
         .name = name,
-        .type = FieldType,
-        .default_value_ptr = obj,
-        .is_comptime = true,
-        .alignment = @alignOf(FieldType),
+        .type = FinalType,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = 0,
     };
 }
 
-fn prune_type(comptime T: anytype) type {
-    comptime var params: []const std.builtin.Type.Fn.Param = &[_]std.builtin.Type.Fn.Param{
-        .{
-            .is_generic = T.params[0].is_generic,
-            .is_noalias = T.params[0].is_noalias,
-            .type = *const anyopaque,
-        },
-    };
-    params = params ++ T.params[1..];
-    return @Type(.{
-        .@"fn" = .{
-            .calling_convention = T.calling_convention,
-            .is_generic = T.is_generic,
-            .is_var_args = T.is_var_args,
-            .params = params,
-            .return_type = T.return_type,
-        },
-    });
-}
-
-pub fn Constructor(comptime InterfaceType: type, object: anytype) InterfaceType {
-    return .{
-        ._vtable = undefined,
-        ._ptr = @ptrCast(object),
-    };
-}
-
-pub fn Interface(comptime declarations: type) type {
-    comptime var fields: []const std.builtin.Type.StructField = std.meta.fields(declarations);
-    for (std.meta.declarations(declarations)) |d| {
-        fields = fields ++ &[_]std.builtin.Type.StructField{addDecl(declarations, d)};
-    }
-    fields = fields ++ &[_]std.builtin.Type.StructField{genDecl(Constructor, "init")};
-    // fields = fields ++ &[_]std.builtin.Type.StructField{.{
-    //     .name = "_vtable",
-    //     .type = @TypeOf(ShapeVTable),
-    //     .default_value_ptr = ShapeVTable,
-    //     .is_comptime = true,
-    //     .alignment = @alignOf(@TypeOf(ShapeVTable)),
-    // }};
-
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .is_tuple = false,
-        .fields = fields,
-        .decls = &.{},
-    } });
-}
-
-fn pure_virtual_call(_: *const anyopaque) void {
-    @panic("Pure virtual function call");
-}
-
-fn genVTableEntry(comptime obj: anytype, name: [:0]const u8) std.builtin.Type.StructField {
-    // @compileLog(obj, name);
-    const FieldType = @field(obj, name);
-    // @compileLog("FieldType: ", FieldType, @TypeOf(FieldType), @alignOf(@TypeOf(FieldType)));
-    // @compileLog("Pruen: ", prune_type(@TypeOf(FieldType)));
-    @compileLog("FieldType: ", prune_type(@typeInfo(@TypeOf(FieldType)).@"fn"));
-    return .{
-        .name = name,
-        .type = *const prune_type(@typeInfo(@TypeOf(FieldType)).@"fn"),
-        .default_value_ptr = @ptrCast(&pure_virtual_call),
-        .is_comptime = true,
-        .alignment = @alignOf(@TypeOf(&pure_virtual_call)),
-    };
-}
-
-pub fn BuildVTable(comptime InterfaceType: anytype, comptime O: anytype) type {
-    @compileLog(InterfaceType);
-    inline for (std.meta.declarations(InterfaceType(O))) |field| {
-        @compileLog(field);
-    }
+pub fn BuildVTable(comptime InterfaceType: anytype) type {
     comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
-    inline for (std.meta.declarations(InterfaceType(O))) |d| {
-        fields = fields ++ &[_]std.builtin.Type.StructField{genVTableEntry(InterfaceType(void), d.name)};
-        @compileLog("Adding field: ", d);
+    inline for (std.meta.declarations(InterfaceType(anyopaque))) |d| {
+        if (std.meta.hasMethod(InterfaceType(anyopaque), d.name)) {
+            const Method = @field(InterfaceType(anyopaque), d.name);
+            fields = fields ++ &[_]std.builtin.Type.StructField{genVTableEntry(Method, d.name)};
+        }
     }
-    // @compileLog(fields);
     return @Type(.{ .@"struct" = .{
         .layout = .auto,
         .is_tuple = false,
         .fields = fields,
         .decls = &.{},
     } });
-    // return VTable;
+}
+
+pub fn GenerateClass(comptime InterfaceType: type) type {
+    return struct {
+        fn build_vtable(comptime Self: anytype) InterfaceType.Self.VTable {
+            var vtable: InterfaceType.Self.VTable = undefined;
+
+            inline for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
+                const field_type = @field(Self, field.name);
+                const vcall = gen_vcall(Self, field_type, field.name);
+                @field(vtable, field.name) = vcall.call;
+            }
+            return vtable;
+        }
+        pub fn init(ptr: anytype) InterfaceType.Self {
+            const gen_vtable = struct {
+                const Self = @TypeOf(ptr.*);
+                const vtable = build_vtable(Self);
+            };
+            return InterfaceType.Self{
+                ._vtable = &gen_vtable.vtable,
+                ._ptr = @ptrCast(ptr),
+            };
+        }
+        pub usingnamespace InterfaceType;
+    };
 }
