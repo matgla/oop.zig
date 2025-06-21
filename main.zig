@@ -22,15 +22,15 @@ fn ShapeInterface(comptime SelfType: type) type {
         pub const Self = SelfType;
 
         pub fn draw(self: *const Self) void {
-            return self._vtable.draw.?(self._ptr, .{});
+            return interface.VirtualCall(self, "draw", .{}, void);
         }
 
         pub fn area(self: *const Self) u32 {
-            return self._vtable.area.?(self._ptr, .{});
+            return interface.VirtualCall(self, "area", .{}, u32);
         }
 
         pub fn set_size(self: *Self, new_size: u32) void {
-            return self._vtable.set_size.?(self._ptr, .{new_size});
+            return interface.VirtualCall(self, "set_size", .{new_size}, void);
         }
     };
 }

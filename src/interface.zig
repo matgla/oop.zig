@@ -1,17 +1,21 @@
 // Copyright (c) 2025 Mateusz Stadnik
 //
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the "Software"), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+// the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
 //
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 //
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 const std = @import("std");
 
@@ -58,7 +62,18 @@ fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type
     };
 }
 
-pub fn BuildVTable(comptime InterfaceType: anytype) type {
+fn addDecl(comptime T: type, d: anytype) std.builtin.Type.StructField {
+    const F = @TypeOf(@field(T, d.name));
+    return .{
+        .name = d.name,
+        .type = F,
+        .default_value_ptr = @field(T, d.name),
+        .is_comptime = true,
+        .alignment = @alignOf(F),
+    };
+}
+
+fn BuildVTable(comptime InterfaceType: anytype) type {
     comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
     inline for (std.meta.declarations(InterfaceType(anyopaque))) |d| {
         if (std.meta.hasMethod(InterfaceType(anyopaque), d.name)) {
@@ -92,10 +107,13 @@ fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
     };
 }
 
-pub fn GenerateClass(comptime InterfaceType: type) type {
+fn GenerateClass(comptime InterfaceType: type) type {
     return struct {
         fn build_vtable_chain(chain: []const type) InterfaceType.Self.VTable {
             var vtable: InterfaceType.Self.VTable = undefined;
+            for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
+                @field(vtable, field.name) = null; // Initialize all fields to null
+            }
             var index: isize = chain.len - 1;
             while (index >= 0) : (index -= 1) {
                 const base = chain[index];
@@ -175,6 +193,16 @@ pub fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) 
         pub fn interface(ptr: *Derived) Base {
             return Base.init_chain(ptr, chain[0 .. chain.len - 1]);
         }
+
+        pub fn new(self: *const Derived, allocator: std.mem.Allocator) !Base {
+            const object: *Derived = try allocator.create(Derived);
+            object.* = self.*;
+            return object.interface();
+        }
+
+        pub fn delete(self: *Derived, allocator: std.mem.Allocator) void {
+            allocator.destroy(self);
+        }
     };
 }
 
@@ -183,7 +211,6 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
         if (!@hasField(Derived, "base")) {
             @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
         }
-        // I think should check also all parents, not only direct base
         var base: ?type = Base;
         while (base != null) {
             for (std.meta.fields(Derived)) |field| {
@@ -199,13 +226,6 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
     };
 }
 
-fn addDecl(comptime T: type, d: anytype) std.builtin.Type.StructField {
-    const F = @TypeOf(@field(T, d.name));
-    return .{
-        .name = d.name,
-        .type = F,
-        .default_value_ptr = @field(T, d.name),
-        .is_comptime = true,
-        .alignment = @alignOf(F),
-    };
+pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
+    return @field(self._vtable, name).?(self._ptr, args);
 }
