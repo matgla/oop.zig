@@ -211,6 +211,7 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
         if (!@hasField(Derived, "base")) {
             @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
         }
+        // disallow fields override
         var base: ?type = Base;
         while (base != null) {
             for (std.meta.fields(Derived)) |field| {
@@ -219,6 +220,10 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
                 }
             }
             base = base.?.Base;
+        }
+        // disallow structs with undefined memory layout
+        if (@typeInfo(Derived).@"struct".layout == .auto) {
+            @compileError("Derived struct must have a defined memory layout.");
         }
     };
     return struct {

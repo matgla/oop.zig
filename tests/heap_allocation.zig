@@ -28,8 +28,8 @@ fn ShapeInterface(comptime SelfType: type) type {
     return struct {
         pub const Self = SelfType;
 
-        pub fn draw(self: *const Self) u32 {
-            return interface.VirtualCall(self, "draw", .{}, u32);
+        pub fn area(self: *const Self) u32 {
+            return interface.VirtualCall(self, "area", .{}, u32);
         }
 
         pub fn set_size(self: *Self, new_size: u32) void {
@@ -51,10 +51,12 @@ const IShape = interface.ConstructInterface(ShapeInterface);
 const Triangle = packed struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
+    height: u32,
+    base: u32,
     size: u32,
 
-    pub fn draw(self: *const Triangle) u32 {
-        return self.size * self.size;
+    pub fn area(self: *const Triangle) u32 {
+        return self.height * self.base / 2 * self.size;
     }
 
     pub fn set_size(self: *Triangle, new_size: u32) void {
@@ -65,10 +67,12 @@ const Triangle = packed struct {
 const Rectangle = packed struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
+    a: u32,
+    b: u32,
     size: u32,
 
-    pub fn draw(self: *const Rectangle) u32 {
-        return self.size + 1000;
+    pub fn area(self: *const Rectangle) u32 {
+        return self.a * self.b * self.size;
     }
 
     pub fn set_size(self: *Rectangle, new_size: u32) void {
@@ -79,25 +83,60 @@ const Rectangle = packed struct {
 const Square = packed struct {
     // This object is derived from Rectangle and overrides some methods
     pub usingnamespace interface.DeriveFromBase(Rectangle, Square);
-    base: Rectangle, //   this implementation requires base class to be first field
-    name: [*:0]const u8, // and it must be at first position to ensure correct type casting
+    base: Rectangle,
 
-    pub fn draw(self: *const Square) u32 {
-        return self.base.draw() * 2; // just an example of overriding
+    pub fn create(a: u32) Square {
+        return Square{
+            .base = Rectangle{
+                .a = a,
+                .b = a,
+                .size = 1,
+            },
+        };
+    }
+};
+
+const BadSquare = packed struct {
+    // This object is derived from Rectangle and overrides some methods
+    pub usingnamespace interface.DeriveFromBase(Rectangle, BadSquare);
+    base: Rectangle, //   this implementation requires base class to be first field
+
+    pub fn area(self: *const BadSquare) u32 {
+        return @as(*const Rectangle, @ptrCast(@alignCast(&self.base))).area() / 10;
+    }
+
+    pub fn create(a: u32) BadSquare {
+        return BadSquare{
+            .base = Rectangle{
+                .a = a,
+                .b = a,
+                .size = 1,
+            },
+        };
     }
 };
 
 test "heap allocation" {
     const allocator = std.testing.allocator;
-    var shape1: IShape = try (Triangle{ .size = 10 }).new(allocator);
+    var shape1: IShape = try (Triangle{ .base = 10, .height = 3, .size = 2 }).new(allocator);
     defer shape1.delete(allocator);
-    var shape2: IShape = try (Rectangle{ .size = 20 }).new(allocator);
+    var shape2: IShape = try (Rectangle{ .a = 5, .b = 2, .size = 1 }).new(allocator);
     defer shape2.delete(allocator);
-    var shape3: IShape = try (Square{
-        .base = Rectangle{
-            .size = 30,
-        },
-        .name = "Square",
-    }).new(allocator);
+    var shape3: IShape = try (Square.create(3)).new(allocator);
     defer shape3.delete(allocator);
+    var shape4: IShape = try (BadSquare.create(5)).new(allocator);
+    defer shape4.delete(allocator);
+
+    try std.testing.expectEqual(30, shape1.area());
+    try std.testing.expectEqual(10, shape2.area());
+    try std.testing.expectEqual(9, shape3.area());
+    shape1.set_size(3);
+    shape2.set_size(2);
+    shape3.set_size(4);
+    try std.testing.expectEqual(45, shape1.area());
+    try std.testing.expectEqual(20, shape2.area());
+    try std.testing.expectEqual(36, shape3.area());
+    try std.testing.expectEqual(2, shape4.area());
+    shape4.set_size(30);
+    try std.testing.expectEqual(75, shape4.area());
 }
