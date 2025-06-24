@@ -18,7 +18,7 @@ Below design decision are worth to be aware of:
 
 5) Base class must be added as first field by now, trying to find solution to automatize this 
 
-6) Structs must be packed to have defined memory layout 
+6) Structs must be packed or extern to have defined memory layout 
 
 7) new/delete is automatically added to interface implementations to create owning interface instance
 
