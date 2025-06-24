@@ -18,7 +18,7 @@ Below design decision are worth to be aware of:
 
 5) Base class must be added as first field by now, trying to find solution to automatize this 
 
-6) Structs must be packed to have defined memory layout 
+6) Structs must be extern to have defined memory layout (for zig < 0.15.0)
 
 7) new/delete is automatically added to interface implementations to create owning interface instance
 
@@ -30,7 +30,7 @@ TODO: how to add zig package
 
 Two branches are currently supported: 
 - main which has support for nigtly build
-- zig_14.1 for zig 14.1 support
+- zig 14.0 dedicated branch 
 
 # Example 
 
@@ -146,7 +146,7 @@ fn AnimalInterface(comptime SelfType: type) type {
 
 const IAnimal = interface.ConstructInterface(AnimalInterface);
 
-const Animal = packed struct {
+const Animal = extern struct {
     pub usingnamespace interface.DeriveFromBase(IAnimal, Animal);
 
     name: [*:0]const u8,
@@ -157,7 +157,7 @@ const Animal = packed struct {
     }
 };
 
-const Dog = packed struct {
+const Dog = extern struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Dog);
     base: Animal,
     breed: [*:0]const u8,
@@ -182,7 +182,7 @@ const Dog = packed struct {
     }
 };
 
-const Cat = packed struct {
+const Cat = extern struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Cat);
     base: Animal,
 

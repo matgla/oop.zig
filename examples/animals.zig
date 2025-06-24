@@ -45,7 +45,7 @@ fn AnimalInterface(comptime SelfType: type) type {
 
 const IAnimal = interface.ConstructInterface(AnimalInterface);
 
-const Animal = packed struct {
+const Animal = extern struct {
     pub usingnamespace interface.DeriveFromBase(IAnimal, Animal);
 
     name: [*:0]const u8,
@@ -56,7 +56,7 @@ const Animal = packed struct {
     }
 };
 
-const Dog = packed struct {
+const Dog = extern struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Dog);
     base: Animal,
     breed: [*:0]const u8,
@@ -81,7 +81,7 @@ const Dog = packed struct {
     }
 };
 
-const Cat = packed struct {
+const Cat = extern struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Cat);
     base: Animal,
 

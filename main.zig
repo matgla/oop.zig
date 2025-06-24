@@ -38,7 +38,7 @@ fn ShapeInterface(comptime SelfType: type) type {
 // ShapeInterface methods are pure virtual, derive them in the childs
 const IShape = interface.ConstructInterface(ShapeInterface);
 
-const Triangle = packed struct {
+const Triangle = extern struct {
     pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
     size: u32,
 
@@ -57,7 +57,7 @@ const Triangle = packed struct {
     }
 };
 
-const Rectangle = packed struct {
+const Rectangle = extern struct {
     pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
     size: u32,
 
@@ -76,7 +76,7 @@ const Rectangle = packed struct {
     }
 };
 
-const Square = packed struct {
+const Square = extern struct {
     pub usingnamespace interface.DeriveFromBase(Rectangle, Square);
     base: Rectangle, // this will ensure correct type casting
     name: [*:0]const u8,

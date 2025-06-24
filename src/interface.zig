@@ -222,7 +222,7 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
             base = base.?.Base;
         }
         // disallow structs with undefined memory layout
-        if (@typeInfo(Derived).@"struct".layout == .auto) {
+        if (@typeInfo(Derived).@"struct".layout != .@"extern") {
             @compileError("Derived struct must have a defined memory layout.");
         }
     };

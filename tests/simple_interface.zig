@@ -33,7 +33,7 @@ fn AnimalInterface(comptime SelfType: type) type {
 
 const IAnimal = interface.ConstructInterface(AnimalInterface);
 
-const Dog = packed struct {
+const Dog = extern struct {
     pub usingnamespace interface.DeriveFromBase(IAnimal, Dog);
 
     pub fn make_sound(self: *const Dog) []const u8 {
@@ -42,7 +42,7 @@ const Dog = packed struct {
     }
 };
 
-const Cat = packed struct {
+const Cat = extern struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IAnimal, Cat);
 

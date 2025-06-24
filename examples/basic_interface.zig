@@ -42,8 +42,8 @@ fn ShapeInterface(comptime SelfType: type) type {
 const IShape = interface.ConstructInterface(ShapeInterface);
 
 // Let's derive Triangle and Rectangle from IShape
-// Child object must be packed to enforce defined memory layout
-const Triangle = packed struct {
+// Child object must be extern to enforce defined memory layout
+const Triangle = extern struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
     size: u32,
@@ -58,7 +58,7 @@ const Triangle = packed struct {
     }
 };
 
-const Rectangle = packed struct {
+const Rectangle = extern struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
     size: u32,
