@@ -29,8 +29,8 @@ Below design decision are worth to be aware of:
 TODO: how to add zig package
 
 Two branches are currently supported: 
-- main which has support for nigtly build
-- zig_14.1 for zig 14.1 support
+- main which has support for nigtly builds
+- zig_14.0 support
 
 # Example 
 
