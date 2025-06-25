@@ -17,6 +17,8 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+//! This module provides basic object oriented programming features in Zig.
+
 const std = @import("std");
 
 fn deduce_type(info: anytype, object_type: anytype) type {
@@ -171,19 +173,6 @@ fn GenerateClass(comptime InterfaceType: type) type {
     };
 }
 
-pub fn ConstructInterface(comptime SelfType: anytype) type {
-    return struct {
-        pub const Self = @This();
-        pub const VTable = BuildVTable(SelfType);
-        pub const IsInterface = true;
-        pub const Base: ?type = null;
-        _vtable: *const VTable,
-        _ptr: *anyopaque,
-
-        pub usingnamespace GenerateClass(SelfType(@This()));
-    };
-}
-
 fn deduce_interface(comptime Base: type) type {
     comptime var base: type = Base;
     while (true) {
@@ -210,7 +199,7 @@ fn build_inheritance_chain(comptime Base: type, comptime Derived: type) []const 
     return chain;
 }
 
-pub fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type {
+fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type {
     return struct {
         pub const Base: ?type = if (chain.len > 1) chain[1] else null;
         pub const InterfaceType = chain[chain.len - 1];
@@ -230,6 +219,10 @@ pub fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) 
     };
 }
 
+/// This is basic inheritance mechanism that allows to derive from a base class
+/// `Base` must be an interface type or a struct that is derived from an interface type.
+/// `Derived` must be a struct that has a `base` field of type `Base` when `Base` is not an interface.
+/// To declare an interface type, use `ConstructInterface` function.
 pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
     comptime if (!@hasDecl(Base, "IsInterface")) { // ensure we have base member
         if (!@hasField(Derived, "base") or !(@FieldType(Derived, "base") == Base)) {
@@ -251,8 +244,28 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
     };
 }
 
+/// This is a wrapper to delegate virtual calls to the vtable.
+/// Look into 'examples' for usage examples.
+/// `self` is a pointer to the object that implements the interface.
+/// `name` is the name of the method to call.
+/// `args` is a tuple of arguments to pass to the method.
+/// `ReturnType` is the type of the return value of the method.
 pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
-    // std.debug.print("Calling virtual function: {s}\n", .{@typeName(@TypeOf(self))});
-    // can I get base if needed somehow?
     return @field(self._vtable, name).?(self._ptr, args);
+}
+
+/// This function constructs an interface type.
+/// `SelfType` is a type of the interface holder generator function.
+/// Returns a struct that represents the interface type.
+pub fn ConstructInterface(comptime SelfType: anytype) type {
+    return struct {
+        pub const Self = @This();
+        pub const VTable = BuildVTable(SelfType);
+        pub const IsInterface = true;
+        pub const Base: ?type = null;
+        _vtable: *const VTable,
+        _ptr: *anyopaque,
+
+        pub usingnamespace GenerateClass(SelfType(@This()));
+    };
 }

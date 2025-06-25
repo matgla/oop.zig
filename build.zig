@@ -43,4 +43,18 @@ pub fn build(b: *std.Build) !void {
             }
         }
     }
+
+    const lib = b.addStaticLibrary(.{
+        .name = "oop",
+        .root_source_file = b.path("src/root.zig"),
+        .optimize = optimize,
+        .target = target,
+    });
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = lib.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    const docs_step = b.step("docs", "Install documentation");
+    docs_step.dependOn(&install_docs.step);
 }

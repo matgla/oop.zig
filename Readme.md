@@ -18,11 +18,15 @@ Below design decision are worth to be aware of:
 
 # How to use it 
 
-TODO: how to add zig package
+Firstly add dependency to your `build.zig.zon`
+`zig fetch --save=modules/oop git+https://github.com/matgla/oop.zig/#HEAD`
 
-Two branches are currently supported: 
-- main which has support for nigtly builds
-- zig_14.0 support
+Then import module in build.zig. 
+For example:
+```
+    const oop = b.dependency("modules/oop", .{});
+    tests.root_module.addImport("interface", oop.module("interface"));
+```
 
 # Example 
 
