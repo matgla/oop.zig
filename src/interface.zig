@@ -153,7 +153,7 @@ fn GenerateClass(comptime InterfaceType: type) type {
 
             inline for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
                 if (@field(vtable, field.name) == null) {
-                    @compileError("Pure virtual function " ++ field.name ++ " for interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
+                    @compileError("Pure virtual function '" ++ field.name ++ "' for interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
                 }
             }
             return vtable;
