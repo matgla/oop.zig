@@ -2,7 +2,7 @@
     .name = .oop_zig,
     .version = "0.0.1",
     .fingerprint = 0x4d0368551b1ab249, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.0-dev.777+6810ffa42",
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",

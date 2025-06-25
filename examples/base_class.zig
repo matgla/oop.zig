@@ -58,7 +58,7 @@ const Triangle = packed struct {
     }
 };
 
-const Rectangle = packed struct {
+const Rectangle = struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
     size: u32,
@@ -73,11 +73,11 @@ const Rectangle = packed struct {
     }
 };
 
-const Square = packed struct {
+const Square = struct {
     // This object is derived from Rectangle and overrides some methods
     pub usingnamespace interface.DeriveFromBase(Rectangle, Square);
     base: Rectangle, //   this implementation requires base class to be first field
-    name: [*:0]const u8, // and it must be at first position to ensure correct type casting
+    name: []const u8, // and it must be at first position to ensure correct type casting
 
     pub fn draw(self: *const Square) void {
         std.debug.print("Square.draw[{s}]: {d}\n", .{ self.name, self.base.size });
