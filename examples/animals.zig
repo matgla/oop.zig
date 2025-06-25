@@ -45,10 +45,10 @@ fn AnimalInterface(comptime SelfType: type) type {
 
 const IAnimal = interface.ConstructInterface(AnimalInterface);
 
-const Animal = packed struct {
+const Animal = struct {
     pub usingnamespace interface.DeriveFromBase(IAnimal, Animal);
 
-    name: [*:0]const u8,
+    name: []const u8,
     age: u32,
 
     pub fn describe(self: *const Animal) void {
@@ -56,12 +56,12 @@ const Animal = packed struct {
     }
 };
 
-const Dog = packed struct {
+const Dog = struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Dog);
     base: Animal,
-    breed: [*:0]const u8,
+    breed: []const u8,
 
-    pub fn create(name: [*:0]const u8, age: u32, breed: [*:0]const u8) Dog {
+    pub fn create(name: []const u8, age: u32, breed: []const u8) Dog {
         return Dog{ .base = Animal{
             .name = name,
             .age = age,
@@ -81,11 +81,11 @@ const Dog = packed struct {
     }
 };
 
-const Cat = packed struct {
+const Cat = struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Cat);
     base: Animal,
 
-    pub fn create(name: [*:0]const u8, age: u32) Cat {
+    pub fn create(name: []const u8, age: u32) Cat {
         return Cat{ .base = Animal{
             .name = name,
             .age = age,

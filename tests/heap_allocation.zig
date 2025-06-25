@@ -64,7 +64,7 @@ const Triangle = packed struct {
     }
 };
 
-const Rectangle = packed struct {
+const Rectangle = struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
     a: u32,
@@ -80,7 +80,7 @@ const Rectangle = packed struct {
     }
 };
 
-const Square = packed struct {
+const Square = struct {
     // This object is derived from Rectangle and overrides some methods
     pub usingnamespace interface.DeriveFromBase(Rectangle, Square);
     base: Rectangle,
@@ -96,22 +96,18 @@ const Square = packed struct {
     }
 };
 
-const BadSquare = packed struct {
+const BadSquare = struct {
     // This object is derived from Rectangle and overrides some methods
-    pub usingnamespace interface.DeriveFromBase(Rectangle, BadSquare);
-    base: Rectangle, //   this implementation requires base class to be first field
+    base: Square, //   this implementation requires base class to be first field
+    pub usingnamespace interface.DeriveFromBase(Square, BadSquare);
 
     pub fn area(self: *const BadSquare) u32 {
-        return @as(*const Rectangle, @ptrCast(@alignCast(&self.base))).area() / 10;
+        return self.base.base.area() / 10;
     }
 
     pub fn create(a: u32) BadSquare {
         return BadSquare{
-            .base = Rectangle{
-                .a = a,
-                .b = a,
-                .size = 1,
-            },
+            .base = Square.create(a),
         };
     }
 };

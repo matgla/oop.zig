@@ -67,11 +67,10 @@ const Rectangle = packed struct {
         std.debug.print("Rectangle.draw: {d}\n", .{self.size});
     }
 
-    // if method is not implemented in derived type it will panic at runtime
-    // pub fn set_size(self: *Rectangle, new_size: u32) void {
-    // std.debug.print("Rectangle.set_size: {d}->{d}\n", .{ self.size, new_size });
-    // self.size = new_size;
-    // }
+    pub fn set_size(self: *Rectangle, new_size: u32) void {
+        std.debug.print("Rectangle.set_size: {d}->{d}\n", .{ self.size, new_size });
+        self.size = new_size;
+    }
 };
 
 // This is function that uses interface instead of concrete types

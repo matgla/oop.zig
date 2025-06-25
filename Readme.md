@@ -9,20 +9,12 @@ Primary goal is to reach C++-like polimorphism into Zig ecosystem.
 Below design decision are worth to be aware of:
 
 1) Virtual functions can be declared only inside interface and not inside base / child structs. 
-
-2) Interface contains pure virtual functions ( = 0 from C++)
-
-3) Methods can be overided in childs, so base classes are possible to be implemented
-
-4) Fields can't be overidden 
-
+2) Interface contains pure virtual functions ( = 0 from C++). It's verified at comptime when .interface() is called
+3) Methods can be overridden in childs, so base classes are possible to be implemented
+4) Fields can't be overidden except of 'base' field
 5) Base class must be added as first field by now, trying to find solution to automatize this 
-
-6) Structs must be packed or extern to have defined memory layout 
-
-7) new/delete is automatically added to interface implementations to create owning interface instance
-
-8) Interface uses fat pointer technique, so owner of VTable and pointer to object is interface, this may be changed if I find reason to move it into child structs
+6) new/delete is automatically added to interface implementations to create owning interface instance
+7) Interface uses fat pointer technique, so owner of VTable and pointer to object is interface, this may be changed if I find reason to move it into child structs
 
 # How to use it 
 
@@ -117,7 +109,6 @@ int main() {
 
 ``` zig
 // examples/animals.zig
-
 const std = @import("std");
 
 const interface = @import("interface");
@@ -146,10 +137,10 @@ fn AnimalInterface(comptime SelfType: type) type {
 
 const IAnimal = interface.ConstructInterface(AnimalInterface);
 
-const Animal = packed struct {
+const Animal = struct {
     pub usingnamespace interface.DeriveFromBase(IAnimal, Animal);
 
-    name: [*:0]const u8,
+    name: []const u8,
     age: u32,
 
     pub fn describe(self: *const Animal) void {
@@ -157,12 +148,12 @@ const Animal = packed struct {
     }
 };
 
-const Dog = packed struct {
+const Dog = struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Dog);
     base: Animal,
-    breed: [*:0]const u8,
+    breed: []const u8,
 
-    pub fn create(name: [*:0]const u8, age: u32, breed: [*:0]const u8) Dog {
+    pub fn create(name: []const u8, age: u32, breed: []const u8) Dog {
         return Dog{ .base = Animal{
             .name = name,
             .age = age,
@@ -182,11 +173,11 @@ const Dog = packed struct {
     }
 };
 
-const Cat = packed struct {
+const Cat = struct {
     pub usingnamespace interface.DeriveFromBase(Animal, Cat);
     base: Animal,
 
-    pub fn create(name: [*:0]const u8, age: u32) Cat {
+    pub fn create(name: []const u8, age: u32) Cat {
         return Cat{ .base = Animal{
             .name = name,
             .age = age,
@@ -223,5 +214,4 @@ pub fn main() !void {
     std.debug.print("\n", .{});
     test_animal(dog);
 }
-
 ```

@@ -89,11 +89,15 @@ fn BuildVTable(comptime InterfaceType: anytype) type {
     } });
 }
 
-fn pure_virtual_function() void {
-    @panic("Pure virtual function called");
+fn decorate_with_const(comptime T: type, comptime BaseType: type) type {
+    if (@typeInfo(T).pointer.is_const) {
+        return *const BaseType;
+    } else {
+        return *BaseType;
+    }
 }
 
-fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
+fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8, index: u32, ObjectType: type) type {
     return struct {
         const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
         const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
@@ -101,8 +105,27 @@ fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8) type {
 
         fn call(ptr: prune_type_info(@typeInfo(SelfType)), call_params: get_vcall_args(ArgsType)) RetType {
             std.debug.assert(@typeInfo(SelfType) == .pointer);
-            const self: SelfType = @ptrCast(@alignCast(ptr));
-            return @call(.auto, @field(Type, name), .{self} ++ call_params);
+            const self: decorate_with_const(SelfType, Type) = @ptrCast(@alignCast(ptr));
+            if (index == 0 or std.mem.eql(u8, name, "delete")) {
+                return @call(.auto, @field(Type, name), .{self} ++ call_params);
+            } else {
+                // seek for parent that has the method
+                comptime var ChildType = ObjectType;
+                var base: decorate_with_const(SelfType, anyopaque) = self;
+                inline while (@hasField(ChildType, "base")) {
+                    const BaseType = ChildType;
+                    ChildType = @FieldType(ChildType, "base");
+                    base = &@field(@as(decorate_with_const(SelfType, BaseType), @ptrCast(@alignCast(base))), "base");
+
+                    // base = &@field(@as(decorate_with_const(SelfType, BaseType), @ptrCast(@alignCast(base))), "base");
+                    // if child has the method then it's the one we want
+                    if (@hasDecl(ChildType, name)) {
+                        // for (0..index) |_| {
+                        // base = &@as(BaseType, @ptrCast(base)).base;
+                        return @call(.auto, @field(ChildType, name), .{@as(decorate_with_const(@TypeOf(ptr), ChildType), @ptrCast(@alignCast(base)))} ++ call_params);
+                    }
+                }
+            }
         }
     };
 }
@@ -115,18 +138,20 @@ fn GenerateClass(comptime InterfaceType: type) type {
                 @field(vtable, field.name) = null; // Initialize all fields to null
             }
             var index: isize = chain.len - 1;
-            while (index >= 0) : (index -= 1) {
+            inline while (index >= 0) : (index -= 1) {
                 const base = chain[index];
                 for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
-                    if (!std.meta.hasMethod(base, field.name)) {
-                        if (@field(vtable, field.name) == null) {
-                            @field(vtable, field.name) = @ptrCast(&pure_virtual_function);
-                        }
-                    } else {
+                    if (std.meta.hasMethod(base, field.name)) {
                         const field_type = @field(base, field.name);
-                        const vcall = gen_vcall(base, field_type, field.name);
+                        const vcall = gen_vcall(base, field_type, field.name, index, chain[0]);
                         @field(vtable, field.name) = vcall.call;
                     }
+                }
+            }
+
+            inline for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
+                if (@field(vtable, field.name) == null) {
+                    @compileError("Pure virtual function " ++ field.name ++ " for interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
                 }
             }
             return vtable;
@@ -176,25 +201,24 @@ fn build_inheritance_chain(comptime Base: type, comptime Derived: type) []const 
     const arg: []const type = &.{Derived};
     chain = chain ++ arg;
 
-    var current: ?type = Base;
-
-    while (current != null) {
+    comptime var current: ?type = Base;
+    inline while (current != null) {
         const a: []const type = &.{current.?};
         chain = chain ++ a;
         current = current.?.Base;
     }
-
     return chain;
 }
 
 pub fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type {
     return struct {
-        pub const Base: type = chain[chain.len - 1];
-        pub fn interface(ptr: *Derived) Base {
-            return Base.init_chain(ptr, chain[0 .. chain.len - 1]);
+        pub const Base: ?type = if (chain.len > 1) chain[1] else null;
+        pub const InterfaceType = chain[chain.len - 1];
+        pub fn interface(ptr: *Derived) InterfaceType {
+            return InterfaceType.init_chain(ptr, chain[0 .. chain.len - 1]);
         }
 
-        pub fn new(self: *const Derived, allocator: std.mem.Allocator) !Base {
+        pub fn new(self: *const Derived, allocator: std.mem.Allocator) !InterfaceType {
             const object: *Derived = try allocator.create(Derived);
             object.* = self.*;
             return object.interface();
@@ -208,22 +232,18 @@ pub fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) 
 
 pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
     comptime if (!@hasDecl(Base, "IsInterface")) { // ensure we have base member
-        if (!@hasField(Derived, "base")) {
+        if (!@hasField(Derived, "base") or !(@FieldType(Derived, "base") == Base)) {
             @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
         }
         // disallow fields override
         var base: ?type = Base;
         while (base != null) {
             for (std.meta.fields(Derived)) |field| {
-                if (@hasField(base.?, field.name)) {
+                if (@hasField(base.?, field.name) and !std.mem.eql(u8, field.name, "base")) {
                     @compileError("Field already exists in the base: " ++ field.name);
                 }
             }
             base = base.?.Base;
-        }
-        // disallow structs with undefined memory layout
-        if (@typeInfo(Derived).@"struct".layout != .@"extern" and @typeInfo(Derived).@"struct".layout != .@"packed") {
-            @compileError("Derived struct must have a defined memory layout.");
         }
     };
     return struct {
@@ -232,5 +252,7 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
 }
 
 pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
+    // std.debug.print("Calling virtual function: {s}\n", .{@typeName(@TypeOf(self))});
+    // can I get base if needed somehow?
     return @field(self._vtable, name).?(self._ptr, args);
 }
