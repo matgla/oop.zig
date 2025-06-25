@@ -257,7 +257,7 @@ pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, Retu
 /// This function constructs an interface type.
 /// `SelfType` is a type of the interface holder generator function.
 /// Returns a struct that represents the interface type.
-pub fn ConstructInterface(comptime SelfType: anytype) type {
+pub fn ConstructInterface(comptime SelfType: fn (comptime _: type) type) type {
     return struct {
         pub const Self = @This();
         pub const VTable = BuildVTable(SelfType);
