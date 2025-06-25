@@ -75,11 +75,11 @@ fn addDecl(comptime T: type, d: anytype) std.builtin.Type.StructField {
     };
 }
 
-fn BuildVTable(comptime InterfaceType: anytype) type {
+fn BuildVTable(comptime InterfaceType: anytype, comptime Type: type) type {
     comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
-    inline for (std.meta.declarations(InterfaceType(anyopaque))) |d| {
-        if (std.meta.hasMethod(InterfaceType(anyopaque), d.name)) {
-            const Method = @field(InterfaceType(anyopaque), d.name);
+    inline for (std.meta.declarations(InterfaceType(Type))) |d| {
+        if (std.meta.hasMethod(InterfaceType(Type), d.name)) {
+            const Method = @field(InterfaceType(Type), d.name);
             fields = fields ++ &[_]std.builtin.Type.StructField{genVTableEntry(Method, d.name)};
         }
     }
@@ -260,7 +260,7 @@ pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, Retu
 pub fn ConstructInterface(comptime SelfType: fn (comptime _: type) type) type {
     return struct {
         pub const Self = @This();
-        pub const VTable = BuildVTable(SelfType);
+        pub const VTable = BuildVTable(SelfType, @This());
         pub const IsInterface = true;
         pub const Base: ?type = null;
         _vtable: *const VTable,
