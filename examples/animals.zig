@@ -37,8 +37,9 @@ fn AnimalInterface(comptime SelfType: type) type {
             return interface.VirtualCall(self, "play", .{toy}, void);
         }
 
-        pub fn delete(self: *Self, allocator: std.mem.Allocator) void {
-            return interface.VirtualCall(self, "delete", .{allocator}, void);
+        pub fn delete(self: *Self) void {
+            interface.VirtualCall(self, "delete", .{}, void);
+            interface.DestructorCall(self);
         }
     };
 }
@@ -79,6 +80,10 @@ const Dog = struct {
     pub fn play(self: *const Dog, toy: []const u8) void {
         std.debug.print("{s} doesn't like: {s}.\n", .{ self.base.name, toy });
     }
+
+    pub fn delete(self: *Dog) void {
+        _ = self;
+    }
 };
 
 const Cat = struct {
@@ -99,6 +104,10 @@ const Cat = struct {
     pub fn play(self: *const Cat, toy: []const u8) void {
         std.debug.print("{s} plays with {s}.\n", .{ self.base.name, toy });
     }
+
+    pub fn delete(self: *Cat) void {
+        _ = self;
+    }
 };
 
 pub fn test_animal(animal: IAnimal) void {
@@ -115,9 +124,9 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     var cat = try Cat.create("Garfield", 7).new(allocator);
-    defer cat.delete(allocator);
+    defer cat.delete();
     var dog = try Dog.create("Lassie", 12, "Rough Collie").new(allocator);
-    defer dog.delete(allocator);
+    defer dog.delete();
     test_animal(cat);
     std.debug.print("\n", .{});
     test_animal(dog);

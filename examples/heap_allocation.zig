@@ -36,8 +36,9 @@ fn ShapeInterface(comptime SelfType: type) type {
             return interface.VirtualCall(self, "set_size", .{new_size}, void);
         }
 
-        pub fn delete(self: *Self, allocator: std.mem.Allocator) void {
-            return interface.VirtualCall(self, "delete", .{allocator}, void);
+        pub fn delete(self: *Self) void {
+            interface.VirtualCall(self, "delete", .{}, void);
+            interface.DestructorCall(self);
         }
     };
 }
@@ -60,6 +61,10 @@ const Triangle = struct {
         std.debug.print("Triangle.set_size: {d}->{d}\n", .{ self.size, new_size });
         self.size = new_size;
     }
+
+    pub fn delete(self: *Triangle) void {
+        _ = self;
+    }
 };
 
 const Rectangle = struct {
@@ -74,6 +79,10 @@ const Rectangle = struct {
     pub fn set_size(self: *Rectangle, new_size: u32) void {
         std.debug.print("Rectangle.set_size: {d}->{d}\n", .{ self.size, new_size });
         self.size = new_size;
+    }
+
+    pub fn delete(self: *Rectangle) void {
+        _ = self;
     }
 };
 
@@ -108,16 +117,16 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
     var shape1: IShape = try (Triangle{ .size = 10 }).new(allocator);
-    defer shape1.delete(allocator);
+    defer shape1.delete();
     var shape2: IShape = try (Rectangle{ .size = 20 }).new(allocator);
-    defer shape2.delete(allocator);
+    defer shape2.delete();
     var shape3: IShape = try (Square{
         .base = Rectangle{
             .size = 30,
         },
         .name = "Square",
     }).new(allocator);
-    defer shape3.delete(allocator);
+    defer shape3.delete();
 
     draw_shape(&shape1);
     std.debug.print("-  Drawing triangle started\n", .{});

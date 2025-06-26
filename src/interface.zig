@@ -83,6 +83,15 @@ fn BuildVTable(comptime InterfaceType: anytype, comptime Type: type) type {
             fields = fields ++ &[_]std.builtin.Type.StructField{genVTableEntry(Method, d.name)};
         }
     }
+    const DestructorType = ?*const fn (ptr: *anyopaque, args: std.meta.Tuple(&.{std.mem.Allocator})) void;
+
+    fields = fields ++ &[_]std.builtin.Type.StructField{.{
+        .name = "_destructor",
+        .type = DestructorType,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = 0,
+    }};
     return @Type(.{ .@"struct" = .{
         .layout = .auto,
         .is_tuple = false,
@@ -159,7 +168,7 @@ fn GenerateClass(comptime InterfaceType: type) type {
             return vtable;
         }
 
-        pub fn init_chain(ptr: anytype, chain: []const type) InterfaceType.Self {
+        pub fn init_chain(ptr: anytype, chain: []const type, allocator: ?std.mem.Allocator) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
                 const vtable = build_vtable_chain(chain);
@@ -167,6 +176,7 @@ fn GenerateClass(comptime InterfaceType: type) type {
             return InterfaceType.Self{
                 ._vtable = &gen_vtable.vtable,
                 ._ptr = @ptrCast(ptr),
+                ._allocator = allocator,
             };
         }
         pub usingnamespace InterfaceType;
@@ -204,16 +214,16 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type
         pub const Base: ?type = if (chain.len > 1) chain[1] else null;
         pub const InterfaceType = chain[chain.len - 1];
         pub fn interface(ptr: *Derived) InterfaceType {
-            return InterfaceType.init_chain(ptr, chain[0 .. chain.len - 1]);
+            return InterfaceType.init_chain(ptr, chain[0 .. chain.len - 1], null);
         }
 
         pub fn new(self: *const Derived, allocator: std.mem.Allocator) !InterfaceType {
             const object: *Derived = try allocator.create(Derived);
             object.* = self.*;
-            return object.interface();
+            return InterfaceType.init_chain(object, chain[0 .. chain.len - 1], allocator);
         }
 
-        pub fn delete(self: *Derived, allocator: std.mem.Allocator) void {
+        pub fn _destructor(self: *Derived, allocator: std.mem.Allocator) void {
             allocator.destroy(self);
         }
     };
@@ -265,7 +275,18 @@ pub fn ConstructInterface(comptime SelfType: fn (comptime _: type) type) type {
         pub const Base: ?type = null;
         _vtable: *const VTable,
         _ptr: *anyopaque,
+        _allocator: ?std.mem.Allocator,
 
         pub usingnamespace GenerateClass(SelfType(@This()));
+
+        pub fn _destructor(self: *Self) void {
+            if (self._allocator) |allocator| {
+                VirtualCall(self, "_destructor", .{allocator}, void);
+            }
+        }
     };
+}
+
+pub fn DestructorCall(self: anytype) void {
+    self._destructor();
 }

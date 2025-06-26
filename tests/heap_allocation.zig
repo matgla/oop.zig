@@ -37,8 +37,9 @@ fn ShapeInterface(comptime SelfType: type) type {
         }
 
         // do not forget about virtual destructor
-        pub fn delete(self: *Self, allocator: std.mem.Allocator) void {
-            return interface.VirtualCall(self, "delete", .{allocator}, void);
+        pub fn delete(self: *Self) void {
+            interface.VirtualCall(self, "delete", .{}, void);
+            interface.DestructorCall(self);
         }
     };
 }
@@ -48,7 +49,7 @@ const IShape = interface.ConstructInterface(ShapeInterface);
 
 // Let's derive Triangle and Rectangle from IShape
 // Child object must be packed to enforce defined memory layout
-const Triangle = packed struct {
+const Triangle = struct {
     // Let's derive from IShape, this call constructs a vtable
     pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
     height: u32,
@@ -61,6 +62,10 @@ const Triangle = packed struct {
 
     pub fn set_size(self: *Triangle, new_size: u32) void {
         self.size = new_size;
+    }
+
+    pub fn delete(self: *Triangle) void {
+        _ = self;
     }
 };
 
@@ -77,6 +82,10 @@ const Rectangle = struct {
 
     pub fn set_size(self: *Rectangle, new_size: u32) void {
         self.size = new_size;
+    }
+
+    pub fn delete(self: *Rectangle) void {
+        _ = self;
     }
 };
 
@@ -115,13 +124,13 @@ const BadSquare = struct {
 test "heap allocation" {
     const allocator = std.testing.allocator;
     var shape1: IShape = try (Triangle{ .base = 10, .height = 3, .size = 2 }).new(allocator);
-    defer shape1.delete(allocator);
+    defer shape1.delete();
     var shape2: IShape = try (Rectangle{ .a = 5, .b = 2, .size = 1 }).new(allocator);
-    defer shape2.delete(allocator);
+    defer shape2.delete();
     var shape3: IShape = try (Square.create(3)).new(allocator);
-    defer shape3.delete(allocator);
+    defer shape3.delete();
     var shape4: IShape = try (BadSquare.create(5)).new(allocator);
-    defer shape4.delete(allocator);
+    defer shape4.delete();
 
     try std.testing.expectEqual(30, shape1.area());
     try std.testing.expectEqual(10, shape2.area());
