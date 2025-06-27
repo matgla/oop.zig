@@ -155,6 +155,11 @@ fn GenerateClass(comptime InterfaceType: type) type {
                     if (std.meta.hasMethod(base, field.name)) {
                         const field_type = @field(base, field.name);
                         const vcall = gen_vcall(base, field_type, field.name, index, chain[0]);
+                        const VTableCallType = *const @TypeOf(vcall.call);
+                        const VTableEntryType = @typeInfo(@TypeOf(@field(vtable, field.name))).optional.child;
+                        if (VTableCallType != VTableEntryType) {
+                            @compileError("Virtual call type mismatch for '" ++ field.name ++ "' in interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Expected: " ++ @typeName(VTableEntryType) ++ "\n" ++ "Got: " ++ @typeName(VTableCallType) ++ "\n");
+                        }
                         @field(vtable, field.name) = vcall.call;
                     }
                 }
