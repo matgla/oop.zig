@@ -158,7 +158,7 @@ fn GenerateClass(comptime InterfaceType: type) type {
                         const VTableCallType = *const @TypeOf(vcall.call);
                         const VTableEntryType = @typeInfo(@TypeOf(@field(vtable, field.name))).optional.child;
                         if (VTableCallType != VTableEntryType) {
-                            @compileError("Virtual call type mismatch for '" ++ field.name ++ "' in interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Expected: " ++ @typeName(VTableEntryType) ++ "\n" ++ "Got: " ++ @typeName(VTableCallType) ++ "\n");
+                            @compileError("Virtual call type mismatch for '" ++ field.name ++ "' in interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Expected: " ++ @typeName(VTableEntryType) ++ "\n" ++ "Got:      " ++ @typeName(VTableCallType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
                         }
                         @field(vtable, field.name) = vcall.call;
                     }
