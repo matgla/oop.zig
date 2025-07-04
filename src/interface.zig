@@ -184,9 +184,9 @@ fn GenerateClass(comptime InterfaceType: type) type {
                 const vtable = build_vtable_chain(chain);
             };
             return InterfaceType.Self{
-                ._vtable = &gen_vtable.vtable,
-                ._ptr = @ptrCast(ptr),
-                ._allocator = allocator,
+                .__vtable = &gen_vtable.vtable,
+                .__ptr = @ptrCast(ptr),
+                .__interface_allocator = allocator,
             };
         }
         pub usingnamespace InterfaceType;
@@ -271,7 +271,7 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
 /// `args` is a tuple of arguments to pass to the method.
 /// `ReturnType` is the type of the return value of the method.
 pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
-    return @field(self._vtable, name).?(self._ptr, args);
+    return @field(self.__vtable, name).?(self.__ptr, args);
 }
 
 /// This function constructs an interface type.
@@ -283,14 +283,14 @@ pub fn ConstructInterface(comptime SelfType: fn (comptime _: type) type) type {
         pub const VTable = BuildVTable(SelfType, @This());
         pub const IsInterface = true;
         pub const Base: ?type = null;
-        _vtable: *const VTable,
-        _ptr: *anyopaque,
-        _allocator: ?std.mem.Allocator,
+        __vtable: *const VTable,
+        __ptr: *anyopaque,
+        __interface_allocator: ?std.mem.Allocator,
 
         pub usingnamespace GenerateClass(SelfType(@This()));
 
         pub fn _destructor(self: *Self) void {
-            if (self._allocator) |allocator| {
+            if (self.__interface_allocator) |allocator| {
                 VirtualCall(self, "_destructor", .{allocator}, void);
             }
         }
