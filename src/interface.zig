@@ -113,6 +113,11 @@ fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8, index: u32, Object
         const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
         const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
         const SelfType = Params[0].type.?;
+        comptime {
+            if (@typeInfo(SelfType) != .pointer) {
+                @compileError("First argument of virtual function must be a pointer to the object type, failed for: " ++ @typeName(Type) ++ "::" ++ name ++ " with self type: " ++ @typeName(SelfType));
+            }
+        }
 
         fn call(ptr: prune_type_info(@typeInfo(SelfType)), call_params: get_vcall_args(ArgsType)) RetType {
             std.debug.assert(@typeInfo(SelfType) == .pointer);
