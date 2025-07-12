@@ -64,17 +64,6 @@ fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type
     };
 }
 
-fn addDecl(comptime T: type, d: anytype) std.builtin.Type.StructField {
-    const F = @TypeOf(@field(T, d.name));
-    return .{
-        .name = d.name,
-        .type = F,
-        .default_value_ptr = @field(T, d.name),
-        .is_comptime = true,
-        .alignment = @alignOf(F),
-    };
-}
-
 fn BuildVTable(comptime InterfaceType: anytype, comptime Type: type) type {
     comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
     inline for (std.meta.declarations(InterfaceType(Type))) |d| {
@@ -86,7 +75,7 @@ fn BuildVTable(comptime InterfaceType: anytype, comptime Type: type) type {
     const DestructorType = ?*const fn (ptr: *anyopaque, args: std.meta.Tuple(&.{std.mem.Allocator})) void;
 
     fields = fields ++ &[_]std.builtin.Type.StructField{.{
-        .name = "_destructor",
+        .name = "__destructor",
         .type = DestructorType,
         .default_value_ptr = null,
         .is_comptime = false,
@@ -148,7 +137,7 @@ fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8, index: u32, Object
 
 fn GenerateClass(comptime InterfaceType: type) type {
     return struct {
-        fn build_vtable_chain(chain: []const type) InterfaceType.Self.VTable {
+        fn __build_vtable_chain(chain: []const type) InterfaceType.Self.VTable {
             var vtable: InterfaceType.Self.VTable = undefined;
             for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
                 @field(vtable, field.name) = null; // Initialize all fields to null
@@ -178,16 +167,26 @@ fn GenerateClass(comptime InterfaceType: type) type {
             return vtable;
         }
 
-        pub fn init_chain(ptr: anytype, chain: []const type, allocator: ?std.mem.Allocator) InterfaceType.Self {
+        pub fn __init_chain(ptr: anytype, chain: []const type, allocator: ?std.mem.Allocator, reference_counter: ?*i32) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
-                const vtable = build_vtable_chain(chain);
+                const vtable = __build_vtable_chain(chain);
             };
-            return InterfaceType.Self{
-                .__vtable = &gen_vtable.vtable,
-                .__ptr = @ptrCast(ptr),
-                .__interface_allocator = allocator,
-            };
+
+            if (@hasField(InterfaceType.Self, "__refcount")) {
+                return InterfaceType.Self{
+                    .__vtable = &gen_vtable.vtable,
+                    .__ptr = @ptrCast(ptr),
+                    .__interface_allocator = allocator,
+                    .__refcount = reference_counter,
+                };
+            } else {
+                return InterfaceType.Self{
+                    .__vtable = &gen_vtable.vtable,
+                    .__ptr = @ptrCast(ptr),
+                    .__interface_allocator = allocator,
+                };
+            }
         }
         pub usingnamespace InterfaceType;
     };
@@ -224,16 +223,22 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type
         pub const Base: ?type = if (chain.len > 1) chain[1] else null;
         pub const InterfaceType = chain[chain.len - 1];
         pub fn interface(ptr: *Derived) InterfaceType {
-            return InterfaceType.init_chain(ptr, chain[0 .. chain.len - 1], null);
+            return InterfaceType.__init_chain(ptr, chain[0 .. chain.len - 1], null, null);
         }
 
         pub fn new(self: *const Derived, allocator: std.mem.Allocator) !InterfaceType {
             const object: *Derived = try allocator.create(Derived);
             object.* = self.*;
-            return InterfaceType.init_chain(object, chain[0 .. chain.len - 1], allocator);
+            var refcounter: ?*i32 = null;
+            if (@hasField(InterfaceType, "__refcount")) {
+                refcounter = try allocator.create(i32);
+                refcounter.?.* = 1;
+            }
+
+            return InterfaceType.__init_chain(object, chain[0 .. chain.len - 1], allocator, refcounter);
         }
 
-        pub fn _destructor(self: *Derived, allocator: std.mem.Allocator) void {
+        pub fn __destructor(self: *Derived, allocator: std.mem.Allocator) void {
             allocator.destroy(self);
         }
     };
@@ -289,14 +294,50 @@ pub fn ConstructInterface(comptime SelfType: fn (comptime _: type) type) type {
 
         pub usingnamespace GenerateClass(SelfType(@This()));
 
-        pub fn _destructor(self: *Self) void {
+        pub fn __destructor(self: *Self) void {
             if (self.__interface_allocator) |allocator| {
-                VirtualCall(self, "_destructor", .{allocator}, void);
+                VirtualCall(self, "__destructor", .{allocator}, void);
             }
         }
     };
 }
 
+/// This function constructs an reference counting interface type.
+/// It is intended for objects that may be shared
+/// `SelfType` is a type of the interface holder generator function.
+/// Returns a struct that represents the interface type.
+pub fn ConstructCountingInterface(comptime SelfType: fn (comptime _: type) type) type {
+    return struct {
+        pub const Self = @This();
+        pub const VTable = BuildVTable(SelfType, @This());
+        pub const IsInterface = true;
+        pub const Base: ?type = null;
+        __vtable: *const VTable,
+        __ptr: *anyopaque,
+        __interface_allocator: ?std.mem.Allocator,
+        __refcount: ?*i32,
+
+        pub usingnamespace GenerateClass(SelfType(@This()));
+
+        pub fn __destructor(self: *Self) void {
+            if (self.__interface_allocator) |allocator| {
+                self.__refcount.?.* -= 1;
+                if (self.__refcount.?.* == 0) {
+                    VirtualCall(self, "__destructor", .{allocator}, void);
+                    allocator.destroy(self.__refcount.?);
+                }
+            }
+        }
+
+        pub fn share(self: *Self) Self {
+            if (self.__refcount) |r| {
+                r.* += 1;
+            }
+            return self.*;
+        }
+    };
+}
+
 pub fn DestructorCall(self: anytype) void {
-    self._destructor();
+    self.__destructor();
 }
