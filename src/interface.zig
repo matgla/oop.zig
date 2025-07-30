@@ -280,15 +280,19 @@ pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
         interface: DeriveFromChain(build_inheritance_chain(Base, Derived), Derived) = .{},
         __data: Derived,
 
-        pub fn init(data: anytype) Self {
+        pub fn init(init_data: anytype) Self {
             var obj: @This() = undefined;
             inline for (std.meta.fields(Derived)) |f| {
-                if (!@hasField(@TypeOf(data), f.name)) {
+                if (!@hasField(@TypeOf(init_data), f.name)) {
                     @compileError("Initializer for " ++ @typeName(Derived) ++ " has no field ." ++ f.name);
                 }
-                @field(obj.__data, f.name) = @field(data, f.name);
+                @field(obj.__data, f.name) = @field(init_data, f.name);
             }
             return obj;
+        }
+
+        pub fn data(self: *Self) *Derived {
+            return &self.__data;
         }
 
         // pub fn __destructor(self: *Self) void {

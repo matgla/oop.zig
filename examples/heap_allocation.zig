@@ -91,6 +91,10 @@ const Square = interface.DeriveFromBase(Rectangle, struct {
     pub fn draw(self: *const Self) void {
         std.debug.print("Square.draw[{s}]: {d}\n", .{ self.name, interface.base(self).size });
     }
+
+    pub fn draw_from_instance(self: *const Self) void {
+        std.debug.print("Square.draw_from_instance[{s}]: {d}\n", .{ self.name, interface.base(self).size });
+    }
 });
 
 // This is function that uses interface instead of concrete types
@@ -116,12 +120,14 @@ pub fn main() !void {
     defer shape1.interface.delete();
     var shape2: IShape = try (Rectangle.init(.{ .size = 20 })).interface.new(allocator);
     defer shape2.interface.delete();
-    var shape3: IShape = try (Square.init(.{
-        .base = Rectangle.init(.{
-            .size = 30,
-        }),
-        .name = "Square",
-    })).interface.new(allocator);
+    var square =
+        Square.init(.{
+            .base = Rectangle.init(.{
+                .size = 30,
+            }),
+            .name = "Square",
+        });
+    var shape3 = square.interface.create();
     defer shape3.interface.delete();
 
     draw_shape(&shape1);
@@ -132,6 +138,8 @@ pub fn main() !void {
     draw_and_modify_shape(&shape2);
     std.debug.print("-  Drawing rectangle finished\n", .{});
     std.debug.print("-  Drawing square started\n", .{});
+    square.data().draw_from_instance();
     draw_and_modify_shape(&shape3);
+    square.data().draw_from_instance();
     std.debug.print("-  Drawing square finished\n", .{});
 }
