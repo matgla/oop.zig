@@ -37,7 +37,6 @@ const IAnimal = interface.ConstructInterface(struct {
     }
 
     pub fn delete(self: *Self) void {
-        interface.VirtualCall(self, "delete", .{}, void);
         interface.DestructorCall(self);
     }
 });

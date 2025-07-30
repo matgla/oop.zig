@@ -37,7 +37,6 @@ const IShape = interface.ConstructInterface(struct {
 
     // do not forget about virtual destructor
     pub fn delete(self: *Self) void {
-        interface.VirtualCall(self, "delete", .{}, void);
         interface.DestructorCall(self);
     }
 });
@@ -99,15 +98,25 @@ const Square = interface.DeriveFromBase(Rectangle, struct {
 const BadSquare = interface.DeriveFromBase(Square, struct {
     const Self = @This();
     base: Square,
+    allocator: std.mem.Allocator,
+    allocated: ?*i32,
 
     pub fn area(self: *const Self) u32 {
         return interface.base(interface.base(self)).area() / 10;
     }
 
-    pub fn create(a: u32) BadSquare {
+    pub fn create(a: u32, allocator: std.mem.Allocator) BadSquare {
         return BadSquare.init(.{
             .base = Square.InstanceType.create(a),
+            .allocator = allocator,
+            .allocated = allocator.create(i32) catch null,
         });
+    }
+
+    pub fn delete(self: *Self) void {
+        if (self.allocated) |allocated| {
+            self.allocator.destroy(allocated);
+        }
     }
 });
 
@@ -119,7 +128,7 @@ test "heap allocation" {
     defer shape2.interface.delete();
     var shape3: IShape = try (Square.InstanceType.create(3)).interface.new(allocator);
     defer shape3.interface.delete();
-    var shape4: IShape = try (BadSquare.InstanceType.create(5)).interface.new(allocator);
+    var shape4: IShape = try (BadSquare.InstanceType.create(5, allocator)).interface.new(allocator);
     defer shape4.interface.delete();
 
     try std.testing.expectEqual(30, shape1.interface.area());

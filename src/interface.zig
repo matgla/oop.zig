@@ -361,6 +361,9 @@ pub fn ConstructInterface(comptime SelfType: type) type {
         interface: SelfType = .{},
 
         pub fn __destructor(self: *Self) void {
+            if (@hasField(VTable, "delete")) {
+                self.__vtable.delete.?(self.__ptr, .{});
+            }
             if (self.__destroy) |destroy| {
                 destroy.call(self.__ptr, destroy.allocator);
             }
@@ -390,6 +393,9 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
             self.__refcount.?.* -= 1;
 
             if (self.__refcount.?.* == 0) {
+                if (@hasField(VTable, "delete")) {
+                    self.__vtable.delete.?(self.__ptr, .{});
+                }
                 if (self.__destroy) |destroy| {
                     destroy.call(self.__ptr, destroy.allocator);
                     destroy.allocator.destroy(self.__refcount.?);

@@ -35,9 +35,12 @@ const IShape = interface.ConstructCountingInterface(struct {
         return interface.CountingInterfaceVirtualCall(self, "set_size", .{new_size}, void);
     }
 
+    pub fn allocate_some(self: *Self) void {
+        return interface.CountingInterfaceVirtualCall(self, "allocate_some", .{}, void);
+    }
+
     // do not forget about virtual destructor
     pub fn delete(self: *Self) void {
-        interface.CountingInterfaceVirtualCall(self, "delete", .{}, void);
         interface.CountingInterfaceDestructorCall(self);
     }
 });
@@ -50,6 +53,8 @@ const Triangle = interface.DeriveFromBase(IShape, struct {
     height: u32,
     base: u32,
     size: u32,
+    allocator: std.mem.Allocator,
+    allocated: ?*i32 = null,
 
     pub fn area(self: *const Self) u32 {
         return self.height * self.base / 2 * self.size;
@@ -59,17 +64,30 @@ const Triangle = interface.DeriveFromBase(IShape, struct {
         self.size = new_size;
     }
 
+    pub fn allocate_some(self: *Self) void {
+        self.allocated = self.allocator.create(i32) catch return;
+    }
+
     pub fn delete(self: *Self) void {
-        _ = self;
+        if (self.allocated) |allocated| {
+            self.allocator.destroy(allocated);
+        }
     }
 });
 
 test "shared objects should be correctly deleted" {
     const allocator = std.testing.allocator;
-    var shape1: IShape = try (Triangle.init(.{ .base = 10, .height = 3, .size = 2 })).interface.new(allocator);
+    var shape1: IShape = try (Triangle.init(.{
+        .base = 10,
+        .height = 3,
+        .size = 2,
+        .allocator = allocator,
+        .allocated = null,
+    })).interface.new(allocator);
+    shape1.interface.allocate_some();
     defer shape1.interface.delete();
-    // var shape2 = shape1.share();
-    // defer shape2.interface.delete();
-    // var shape3 = shape1.share();
-    // defer shape3.interface.delete();
+    var shape2 = shape1.share();
+    defer shape2.interface.delete();
+    var shape3 = shape1.share();
+    defer shape3.interface.delete();
 }

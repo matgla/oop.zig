@@ -239,3 +239,8 @@ If access to object type is needed then use .InstanceType.
 
 For creating interface object use `.interface` followed by `.new` or `.create`. 
 
+# Destruction of objects 
+
+`delete` member field is reserved for deinitalization purposes, if your code needs to be deinitialized then add `delete` as virtual method and call `delete`.
+
+`delete` may be called by framework when `DestructorCall` is executed.
