@@ -167,17 +167,26 @@ fn GenerateClass(comptime InterfaceType: type) type {
             return vtable;
         }
 
-        pub fn __init_chain(ptr: anytype, chain: []const type, destroy: ?DestroyHolder) InterfaceType.Self {
+        pub fn __init_chain(ptr: anytype, chain: []const type, destroy: ?DestroyHolder, reference_counter: ?*i32) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
                 const vtable = __build_vtable_chain(chain);
             };
 
-            return InterfaceType.Self{
-                .__vtable = &gen_vtable.vtable,
-                .__ptr = @ptrCast(ptr),
-                .__destroy = destroy,
-            };
+            if (@hasField(InterfaceType.Self, "__refcount")) {
+                return InterfaceType.Self{
+                    .__vtable = &gen_vtable.vtable,
+                    .__ptr = @ptrCast(ptr),
+                    .__destroy = destroy,
+                    .__refcount = reference_counter,
+                };
+            } else {
+                return InterfaceType.Self{
+                    .__vtable = &gen_vtable.vtable,
+                    .__ptr = @ptrCast(ptr),
+                    .__destroy = destroy,
+                };
+            }
         }
     };
 }
@@ -220,7 +229,7 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
                 BaseType = InterfaceType;
             }
             const parent: *DeriveFromBase(BaseType.?, Derived) = @alignCast(@fieldParentPtr("interface", ptr));
-            return InterfaceType.InterfaceType.__init_chain(parent, chain[0 .. chain.len - 1], null);
+            return InterfaceType.InterfaceType.__init_chain(parent, chain[0 .. chain.len - 1], null, null);
         }
 
         pub fn new(ptr: *const Self, allocator: std.mem.Allocator) !InterfaceType {
@@ -242,7 +251,15 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
                 .allocator = allocator,
                 .call = &release.call,
             };
-            return InterfaceType.InterfaceType.__init_chain(object, chain[0 .. chain.len - 1], destroy);
+
+            var refcounter: ?*i32 = null;
+
+            if (@hasField(InterfaceType, "__refcount")) {
+                refcounter = try allocator.create(i32);
+                refcounter.?.* = 1;
+            }
+
+            return InterfaceType.InterfaceType.__init_chain(object, chain[0 .. chain.len - 1], destroy, refcounter);
         }
 
         pub fn __destructor(self: *Self, allocator: std.mem.Allocator) void {
@@ -317,6 +334,16 @@ pub fn DestructorCall(self: anytype) void {
     parent.__destructor();
 }
 
+pub fn CountingInterfaceVirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
+    const parent: decorate_with_const(@TypeOf(self), ConstructCountingInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
+    return @field(parent.__vtable, name).?(parent.__ptr, args);
+}
+
+pub fn CountingInterfaceDestructorCall(self: anytype) void {
+    const parent: decorate_with_const(@TypeOf(self), ConstructCountingInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
+    parent.__destructor();
+}
+
 /// This function constructs an interface type.
 /// `SelfType` is a type of the interface holder generator function.
 /// Returns a struct that represents the interface type.
@@ -341,6 +368,44 @@ pub fn ConstructInterface(comptime SelfType: type) type {
     };
 }
 
+/// This function constructs an reference counting interface type.
+/// It is intended for objects that may be shared
+/// `SelfType` is a type of the interface holder generator function.
+/// Returns a struct that represents the interface type.
+pub fn ConstructCountingInterface(comptime SelfType: type) type {
+    return struct {
+        pub const Self = @This();
+        pub const VTable = BuildVTable(SelfType);
+        pub const IsInterface = true;
+        pub const Base: ?type = null;
+        const InterfaceType = GenerateClass(@This());
+
+        __vtable: *const VTable,
+        __ptr: *anyopaque,
+        __destroy: ?DestroyHolder,
+        __refcount: ?*i32,
+        interface: SelfType = .{},
+
+        pub fn __destructor(self: *Self) void {
+            self.__refcount.?.* -= 1;
+
+            if (self.__refcount.?.* == 0) {
+                if (self.__destroy) |destroy| {
+                    destroy.call(self.__ptr, destroy.allocator);
+                    destroy.allocator.destroy(self.__refcount.?);
+                }
+            }
+        }
+
+        pub fn share(self: *Self) Self {
+            if (self.__refcount) |r| {
+                r.* += 1;
+            }
+
+            return self.*;
+        }
+    };
+}
 pub fn GetBase(self: anytype) decorate_with_const(@TypeOf(self), @TypeOf(self.*.base.__data)) {
     return &(self.*.base.__data);
 }
