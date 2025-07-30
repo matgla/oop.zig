@@ -20,5 +20,4 @@
 comptime {
     _ = @import("heap_allocation.zig");
     _ = @import("simple_interface.zig");
-    _ = @import("shared.zig");
 }

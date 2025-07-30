@@ -21,6 +21,11 @@
 
 const std = @import("std");
 
+const DestroyHolder = struct {
+    allocator: std.mem.Allocator,
+    call: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator) void,
+};
+
 fn deduce_type(info: anytype, object_type: anytype) type {
     if (info.pointer.is_const) {
         return *const object_type;
@@ -64,23 +69,15 @@ fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type
     };
 }
 
-fn BuildVTable(comptime InterfaceType: anytype, comptime Type: type) type {
+fn BuildVTable(comptime InterfaceType: anytype) type {
     comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
-    inline for (std.meta.declarations(InterfaceType(Type))) |d| {
-        if (std.meta.hasMethod(InterfaceType(Type), d.name)) {
-            const Method = @field(InterfaceType(Type), d.name);
+    inline for (std.meta.declarations(InterfaceType)) |d| {
+        if (std.meta.hasMethod(InterfaceType, d.name)) {
+            const Method = @field(InterfaceType, d.name);
             fields = fields ++ &[_]std.builtin.Type.StructField{genVTableEntry(Method, d.name)};
         }
     }
-    const DestructorType = ?*const fn (ptr: *anyopaque, args: std.meta.Tuple(&.{std.mem.Allocator})) void;
 
-    fields = fields ++ &[_]std.builtin.Type.StructField{.{
-        .name = "__destructor",
-        .type = DestructorType,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = 0,
-    }};
     return @Type(.{ .@"struct" = .{
         .layout = .auto,
         .is_tuple = false,
@@ -119,9 +116,8 @@ fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8, index: u32, Object
                 var base: decorate_with_const(SelfType, anyopaque) = self;
                 inline while (@hasField(ChildType, "base")) {
                     const BaseType = ChildType;
-                    ChildType = @FieldType(ChildType, "base");
+                    ChildType = @FieldType(@FieldType(ChildType, "base"), "__data");
                     base = &@field(@as(decorate_with_const(SelfType, BaseType), @ptrCast(@alignCast(base))), "base");
-
                     // base = &@field(@as(decorate_with_const(SelfType, BaseType), @ptrCast(@alignCast(base))), "base");
                     // if child has the method then it's the one we want
                     if (@hasDecl(ChildType, name)) {
@@ -130,6 +126,7 @@ fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8, index: u32, Object
                         return @call(.auto, @field(ChildType, name), .{@as(decorate_with_const(@TypeOf(ptr), ChildType), @ptrCast(@alignCast(base)))} ++ call_params);
                     }
                 }
+                @compileError("Parent not found for function: '" ++ name ++ "' in '" ++ @typeName(ObjectType) ++ "'");
             }
         }
     };
@@ -144,7 +141,10 @@ fn GenerateClass(comptime InterfaceType: type) type {
             }
             var index: isize = chain.len - 1;
             inline while (index >= 0) : (index -= 1) {
-                const base = chain[index];
+                comptime var base = chain[index];
+                comptime if (@hasField(chain[index], "__data")) {
+                    base = @FieldType(chain[index], "__data");
+                };
                 for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
                     if (std.meta.hasMethod(base, field.name)) {
                         const field_type = @field(base, field.name);
@@ -167,28 +167,18 @@ fn GenerateClass(comptime InterfaceType: type) type {
             return vtable;
         }
 
-        pub fn __init_chain(ptr: anytype, chain: []const type, allocator: ?std.mem.Allocator, reference_counter: ?*i32) InterfaceType.Self {
+        pub fn __init_chain(ptr: anytype, chain: []const type, destroy: ?DestroyHolder) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
                 const vtable = __build_vtable_chain(chain);
             };
 
-            if (@hasField(InterfaceType.Self, "__refcount")) {
-                return InterfaceType.Self{
-                    .__vtable = &gen_vtable.vtable,
-                    .__ptr = @ptrCast(ptr),
-                    .__interface_allocator = allocator,
-                    .__refcount = reference_counter,
-                };
-            } else {
-                return InterfaceType.Self{
-                    .__vtable = &gen_vtable.vtable,
-                    .__ptr = @ptrCast(ptr),
-                    .__interface_allocator = allocator,
-                };
-            }
+            return InterfaceType.Self{
+                .__vtable = &gen_vtable.vtable,
+                .__ptr = @ptrCast(ptr),
+                .__destroy = destroy,
+            };
         }
-        pub usingnamespace InterfaceType;
     };
 }
 
@@ -218,28 +208,46 @@ fn build_inheritance_chain(comptime Base: type, comptime Derived: type) []const 
     return chain;
 }
 
-fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type {
+fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
     return struct {
         pub const Base: ?type = if (chain.len > 1) chain[1] else null;
         pub const InterfaceType = chain[chain.len - 1];
-        pub fn interface(ptr: *Derived) InterfaceType {
-            return InterfaceType.__init_chain(ptr, chain[0 .. chain.len - 1], null, null);
-        }
 
-        pub fn new(self: *const Derived, allocator: std.mem.Allocator) !InterfaceType {
-            const object: *Derived = try allocator.create(Derived);
-            object.* = self.*;
-            var refcounter: ?*i32 = null;
-            if (@hasField(InterfaceType, "__refcount")) {
-                refcounter = try allocator.create(i32);
-                refcounter.?.* = 1;
+        const Self = @This();
+        pub fn create(ptr: *Self) InterfaceType {
+            comptime var BaseType = Base;
+            if (BaseType == null) {
+                BaseType = InterfaceType;
             }
-
-            return InterfaceType.__init_chain(object, chain[0 .. chain.len - 1], allocator, refcounter);
+            const parent: *DeriveFromBase(BaseType.?, Derived) = @alignCast(@fieldParentPtr("interface", ptr));
+            return InterfaceType.InterfaceType.__init_chain(parent, chain[0 .. chain.len - 1], null);
         }
 
-        pub fn __destructor(self: *Derived, allocator: std.mem.Allocator) void {
-            allocator.destroy(self);
+        pub fn new(ptr: *const Self, allocator: std.mem.Allocator) !InterfaceType {
+            comptime var BaseType = Base;
+            if (BaseType == null) {
+                BaseType = InterfaceType;
+            }
+            const parent: *const DeriveFromBase(BaseType.?, Derived) = @alignCast(@fieldParentPtr("interface", ptr));
+
+            const object = try allocator.create(DeriveFromBase(BaseType.?, Derived));
+            object.* = parent.*;
+            const release = struct {
+                fn call(p: *anyopaque, alloc: std.mem.Allocator) void {
+                    const self: *DeriveFromBase(BaseType.?, Derived) = @alignCast(@ptrCast(p));
+                    alloc.destroy(self);
+                }
+            };
+            const destroy: DestroyHolder = .{
+                .allocator = allocator,
+                .call = &release.call,
+            };
+            return InterfaceType.InterfaceType.__init_chain(object, chain[0 .. chain.len - 1], destroy);
+        }
+
+        pub fn __destructor(self: *Self, allocator: std.mem.Allocator) void {
+            const obj: *Derived = @alignCast(@fieldParentPtr("interface", self));
+            allocator.destroy(obj);
         }
     };
 }
@@ -248,24 +256,44 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: anytype) type
 /// `Base` must be an interface type or a struct that is derived from an interface type.
 /// `Derived` must be a struct that has a `base` field of type `Base` when `Base` is not an interface.
 /// To declare an interface type, use `ConstructInterface` function.
-pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
-    comptime if (!@hasDecl(Base, "IsInterface")) { // ensure we have base member
-        if (!@hasField(Derived, "base") or !(@FieldType(Derived, "base") == Base)) {
+pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
+    comptime if (!@hasDecl(BaseType, "IsInterface")) { // ensure we have base member
+        if (!@hasField(Derived, "base") or !(@FieldType(Derived, "base") == BaseType)) {
             @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
         }
-        // disallow fields override
-        var base: ?type = Base;
-        while (base != null) {
-            for (std.meta.fields(Derived)) |field| {
-                if (@hasField(base.?, field.name) and !std.mem.eql(u8, field.name, "base")) {
-                    @compileError("Field already exists in the base: " ++ field.name);
-                }
-            }
-            base = base.?.Base;
-        }
+        // // disallow fields override
+        // var base: ?type = BaseType;
+        // while (base != null) {
+        //     for (std.meta.fields(Derived)) |field| {
+        //         if (@hasField(base.?, field.name) and !std.mem.eql(u8, field.name, "base")) {
+        //             @compileError("Field already exists in the base: " ++ field.name);
+        //         }
+        //     }
+        //     base = base.?.Base;
+        // }
     };
+
     return struct {
-        pub usingnamespace DeriveFromChain(build_inheritance_chain(Base, Derived), Derived);
+        const Self = @This();
+        pub const Base = BaseType;
+        pub const InstanceType = Derived;
+        interface: DeriveFromChain(build_inheritance_chain(Base, Derived), Derived) = .{},
+        __data: Derived,
+
+        pub fn init(data: anytype) Self {
+            var obj: @This() = undefined;
+            inline for (std.meta.fields(Derived)) |f| {
+                if (!@hasField(@TypeOf(data), f.name)) {
+                    @compileError("Initializer for " ++ @typeName(Derived) ++ " has no field ." ++ f.name);
+                }
+                @field(obj.__data, f.name) = @field(data, f.name);
+            }
+            return obj;
+        }
+
+        // pub fn __destructor(self: *Self) void {
+        //     self.interface.__destructor(self.interface);
+        // }
     };
 }
 
@@ -276,68 +304,39 @@ pub fn DeriveFromBase(comptime Base: anytype, comptime Derived: anytype) type {
 /// `args` is a tuple of arguments to pass to the method.
 /// `ReturnType` is the type of the return value of the method.
 pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
-    return @field(self.__vtable, name).?(self.__ptr, args);
+    const parent: decorate_with_const(@TypeOf(self), ConstructInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
+    return @field(parent.__vtable, name).?(parent.__ptr, args);
+}
+
+pub fn DestructorCall(self: anytype) void {
+    const parent: decorate_with_const(@TypeOf(self), ConstructInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
+    parent.__destructor();
 }
 
 /// This function constructs an interface type.
 /// `SelfType` is a type of the interface holder generator function.
 /// Returns a struct that represents the interface type.
-pub fn ConstructInterface(comptime SelfType: fn (comptime _: type) type) type {
+pub fn ConstructInterface(comptime SelfType: type) type {
     return struct {
         pub const Self = @This();
-        pub const VTable = BuildVTable(SelfType, @This());
+        pub const VTable = BuildVTable(SelfType);
         pub const IsInterface = true;
         pub const Base: ?type = null;
+        const InterfaceType = GenerateClass(@This());
+
         __vtable: *const VTable,
         __ptr: *anyopaque,
-        __interface_allocator: ?std.mem.Allocator,
-
-        pub usingnamespace GenerateClass(SelfType(@This()));
+        __destroy: ?DestroyHolder,
+        interface: SelfType = .{},
 
         pub fn __destructor(self: *Self) void {
-            if (self.__interface_allocator) |allocator| {
-                VirtualCall(self, "__destructor", .{allocator}, void);
+            if (self.__destroy) |destroy| {
+                destroy.call(self.__ptr, destroy.allocator);
             }
         }
     };
 }
 
-/// This function constructs an reference counting interface type.
-/// It is intended for objects that may be shared
-/// `SelfType` is a type of the interface holder generator function.
-/// Returns a struct that represents the interface type.
-pub fn ConstructCountingInterface(comptime SelfType: fn (comptime _: type) type) type {
-    return struct {
-        pub const Self = @This();
-        pub const VTable = BuildVTable(SelfType, @This());
-        pub const IsInterface = true;
-        pub const Base: ?type = null;
-        __vtable: *const VTable,
-        __ptr: *anyopaque,
-        __interface_allocator: ?std.mem.Allocator,
-        __refcount: ?*i32,
-
-        pub usingnamespace GenerateClass(SelfType(@This()));
-
-        pub fn __destructor(self: *Self) void {
-            if (self.__interface_allocator) |allocator| {
-                self.__refcount.?.* -= 1;
-                if (self.__refcount.?.* == 0) {
-                    VirtualCall(self, "__destructor", .{allocator}, void);
-                    allocator.destroy(self.__refcount.?);
-                }
-            }
-        }
-
-        pub fn share(self: *Self) Self {
-            if (self.__refcount) |r| {
-                r.* += 1;
-            }
-            return self.*;
-        }
-    };
-}
-
-pub fn DestructorCall(self: anytype) void {
-    self.__destructor();
+pub fn GetBase(self: anytype) decorate_with_const(@TypeOf(self), @TypeOf(self.*.base.__data)) {
+    return &(self.*.base.__data);
 }

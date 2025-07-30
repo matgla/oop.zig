@@ -24,76 +24,75 @@ const interface = @import("interface");
 // Constructs an interface for Shape objects
 // all methods are pure virtual, so they must be implemented in the derived types
 // SelfType is type of InterfaceHolder struct (in c++ it would be a class with pure virtual methods)
-fn ShapeInterface(comptime SelfType: type) type {
-    return struct {
-        pub const Self = SelfType;
+const ShapeInterface = struct {
+    pub const Self = @This();
 
-        pub fn draw(self: *const Self) void {
-            return interface.VirtualCall(self, "draw", .{}, void);
-        }
+    pub fn draw(self: *const Self) void {
+        return interface.VirtualCall(self, "draw", .{}, void);
+    }
 
-        pub fn set_size(self: *Self, new_size: u32) void {
-            return interface.VirtualCall(self, "set_size", .{new_size}, void);
-        }
-    };
-}
+    pub fn set_size(self: *Self, new_size: u32) void {
+        return interface.VirtualCall(self, "set_size", .{new_size}, void);
+    }
+};
 
 // IShape is struct which is really an interface type
 const IShape = interface.ConstructInterface(ShapeInterface);
 
 // Let's derive Triangle and Rectangle from IShape
 // Child object must be packed to enforce defined memory layout
-const Triangle = struct {
+const Triangle = interface.DeriveFromBase(IShape, struct {
+    const Self = @This();
     // Let's derive from IShape, this call constructs a vtable
-    pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
     size: u32,
 
-    pub fn draw(self: *const Triangle) void {
+    pub fn draw(self: *const Self) void {
         std.debug.print("Triangle.draw: {d}\n", .{self.size});
     }
 
-    pub fn set_size(self: *Triangle, new_size: u32) void {
+    pub fn set_size(self: *Self, new_size: u32) void {
         std.debug.print("Triangle.set_size: {d}->{d}\n", .{ self.size, new_size });
         self.size = new_size;
     }
-};
+});
 
-const Rectangle = struct {
+const Rectangle = interface.DeriveFromBase(IShape, struct {
+    const Self = @This();
     // Let's derive from IShape, this call constructs a vtable
-    pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
     size: u32,
 
-    pub fn draw(self: *const Rectangle) void {
+    pub fn draw(self: *const Self) void {
         std.debug.print("Rectangle.draw: {d}\n", .{self.size});
     }
 
-    pub fn set_size(self: *Rectangle, new_size: u32) void {
+    pub fn set_size(self: *Self, new_size: u32) void {
         std.debug.print("Rectangle.set_size: {d}->{d}\n", .{ self.size, new_size });
         self.size = new_size;
     }
-};
+});
 
 // This is function that uses interface instead of concrete types
 pub fn draw_and_modify_shape(shape: *IShape) void {
     // Call the draw method of the shape
-    shape.draw();
+    shape.interface.draw();
     // We will panic there for Rectangle
-    shape.set_size(123);
-    shape.draw();
+    shape.interface.set_size(123);
+    shape.interface.draw();
 }
 
 pub fn draw_shape(shape: *const IShape) void {
-    shape.draw();
+    shape.interface.draw();
 }
 
 pub fn main() void {
-    var triangle = Triangle{ .size = 10 };
-    var rectangle = Rectangle{ .size = 20 };
+    var triangle = Triangle.init(.{ .size = 10 });
+    std.debug.print("Triangle 0x{x}\n", .{@intFromPtr(&triangle)});
+    var rectangle = Rectangle.init(.{ .size = 123 });
     // create interface pointers
     // in c++ you can't do this, but in my implemnetation you can since interface
     // is owner of vtable and pointer (fat pointer)
-    var shape1: IShape = triangle.interface();
-    var shape2: IShape = rectangle.interface();
+    var shape1: IShape = triangle.interface.create();
+    var shape2: IShape = rectangle.interface.create();
 
     // Draw the shapes
 

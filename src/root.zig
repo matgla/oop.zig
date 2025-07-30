@@ -19,6 +19,6 @@
 
 pub const DeriveFromBase = @import("interface.zig").DeriveFromBase;
 pub const ConstructInterface = @import("interface.zig").ConstructInterface;
-pub const ConstructCountingInterface = @import("interface.zig").ConstructCountingInterface;
 pub const VirtualCall = @import("interface.zig").VirtualCall;
 pub const DestructorCall = @import("interface.zig").DestructorCall;
+pub const base = @import("interface.zig").GetBase;

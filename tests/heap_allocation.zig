@@ -24,124 +24,114 @@ const interface = @import("interface");
 // Constructs an interface for Shape objects
 // all methods are pure virtual, so they must be implemented in the derived types
 // SelfType is type of InterfaceHolder struct (in c++ it would be a class with pure virtual methods)
-fn ShapeInterface(comptime SelfType: type) type {
-    return struct {
-        pub const Self = SelfType;
+const IShape = interface.ConstructInterface(struct {
+    pub const Self = @This();
 
-        pub fn area(self: *const Self) u32 {
-            return interface.VirtualCall(self, "area", .{}, u32);
-        }
+    pub fn area(self: *const Self) u32 {
+        return interface.VirtualCall(self, "area", .{}, u32);
+    }
 
-        pub fn set_size(self: *Self, new_size: u32) void {
-            return interface.VirtualCall(self, "set_size", .{new_size}, void);
-        }
+    pub fn set_size(self: *Self, new_size: u32) void {
+        return interface.VirtualCall(self, "set_size", .{new_size}, void);
+    }
 
-        // do not forget about virtual destructor
-        pub fn delete(self: *Self) void {
-            interface.VirtualCall(self, "delete", .{}, void);
-            interface.DestructorCall(self);
-        }
-    };
-}
-
-// IShape is struct which is really an interface type
-const IShape = interface.ConstructInterface(ShapeInterface);
+    // do not forget about virtual destructor
+    pub fn delete(self: *Self) void {
+        interface.VirtualCall(self, "delete", .{}, void);
+        interface.DestructorCall(self);
+    }
+});
 
 // Let's derive Triangle and Rectangle from IShape
 // Child object must be packed to enforce defined memory layout
-const Triangle = struct {
-    // Let's derive from IShape, this call constructs a vtable
-    pub usingnamespace interface.DeriveFromBase(IShape, Triangle);
+const Triangle = interface.DeriveFromBase(IShape, struct {
+    pub const Self = @This();
     height: u32,
     base: u32,
     size: u32,
 
-    pub fn area(self: *const Triangle) u32 {
+    pub fn area(self: *const Self) u32 {
         return self.height * self.base / 2 * self.size;
     }
 
-    pub fn set_size(self: *Triangle, new_size: u32) void {
+    pub fn set_size(self: *Self, new_size: u32) void {
         self.size = new_size;
     }
 
-    pub fn delete(self: *Triangle) void {
+    pub fn delete(self: *Self) void {
         _ = self;
     }
-};
+});
 
-const Rectangle = struct {
-    // Let's derive from IShape, this call constructs a vtable
-    pub usingnamespace interface.DeriveFromBase(IShape, Rectangle);
+const Rectangle = interface.DeriveFromBase(IShape, struct {
+    const Self = @This();
     a: u32,
     b: u32,
     size: u32,
 
-    pub fn area(self: *const Rectangle) u32 {
+    pub fn area(self: *const Self) u32 {
         return self.a * self.b * self.size;
     }
 
-    pub fn set_size(self: *Rectangle, new_size: u32) void {
+    pub fn set_size(self: *Self, new_size: u32) void {
         self.size = new_size;
     }
 
-    pub fn delete(self: *Rectangle) void {
+    pub fn delete(self: *Self) void {
         _ = self;
     }
-};
+});
 
-const Square = struct {
-    // This object is derived from Rectangle and overrides some methods
-    pub usingnamespace interface.DeriveFromBase(Rectangle, Square);
+const Square = interface.DeriveFromBase(Rectangle, struct {
     base: Rectangle,
 
     pub fn create(a: u32) Square {
-        return Square{
-            .base = Rectangle{
+        return Square.init(.{
+            .base = Rectangle.init(.{
                 .a = a,
                 .b = a,
                 .size = 1,
-            },
-        };
+            }),
+        });
     }
-};
+});
 
-const BadSquare = struct {
-    // This object is derived from Rectangle and overrides some methods
-    base: Square, //   this implementation requires base class to be first field
-    pub usingnamespace interface.DeriveFromBase(Square, BadSquare);
+const BadSquare = interface.DeriveFromBase(Square, struct {
+    const Self = @This();
+    base: Square,
 
-    pub fn area(self: *const BadSquare) u32 {
-        return self.base.base.area() / 10;
+    pub fn area(self: *const Self) u32 {
+        return interface.base(interface.base(self)).area() / 10;
     }
 
     pub fn create(a: u32) BadSquare {
-        return BadSquare{
-            .base = Square.create(a),
-        };
+        return BadSquare.init(.{
+            .base = Square.InstanceType.create(a),
+        });
     }
-};
+});
 
 test "heap allocation" {
     const allocator = std.testing.allocator;
-    var shape1: IShape = try (Triangle{ .base = 10, .height = 3, .size = 2 }).new(allocator);
-    defer shape1.delete();
-    var shape2: IShape = try (Rectangle{ .a = 5, .b = 2, .size = 1 }).new(allocator);
-    defer shape2.delete();
-    var shape3: IShape = try (Square.create(3)).new(allocator);
-    defer shape3.delete();
-    var shape4: IShape = try (BadSquare.create(5)).new(allocator);
-    defer shape4.delete();
+    var shape1: IShape = try (Triangle.init(.{ .base = 10, .height = 3, .size = 2 })).interface.new(allocator);
+    defer shape1.interface.delete();
+    var shape2: IShape = try (Rectangle.init(.{ .a = 5, .b = 2, .size = 1 })).interface.new(allocator);
+    defer shape2.interface.delete();
+    var shape3: IShape = try (Square.InstanceType.create(3)).interface.new(allocator);
+    defer shape3.interface.delete();
+    var shape4: IShape = try (BadSquare.InstanceType.create(5)).interface.new(allocator);
+    defer shape4.interface.delete();
 
-    try std.testing.expectEqual(30, shape1.area());
-    try std.testing.expectEqual(10, shape2.area());
-    try std.testing.expectEqual(9, shape3.area());
-    shape1.set_size(3);
-    shape2.set_size(2);
-    shape3.set_size(4);
-    try std.testing.expectEqual(45, shape1.area());
-    try std.testing.expectEqual(20, shape2.area());
-    try std.testing.expectEqual(36, shape3.area());
-    try std.testing.expectEqual(2, shape4.area());
-    shape4.set_size(30);
-    try std.testing.expectEqual(75, shape4.area());
+    try std.testing.expectEqual(30, shape1.interface.area());
+    try std.testing.expectEqual(10, shape2.interface.area());
+    try std.testing.expectEqual(9, shape3.interface.area());
+    shape1.interface.set_size(3);
+    shape2.interface.set_size(2);
+    shape3.interface.set_size(4);
+    try std.testing.expectEqual(45, shape1.interface.area());
+    try std.testing.expectEqual(20, shape2.interface.area());
+    try std.testing.expectEqual(36, shape3.interface.area());
+    try std.testing.expectEqual(2, shape4.interface.area());
+    shape4.interface.set_size(30);
+    try std.testing.expectEqual(75, shape4.interface.area());
 }

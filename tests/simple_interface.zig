@@ -21,45 +21,40 @@ const std = @import("std");
 
 const interface = @import("interface");
 
-fn AnimalInterface(comptime SelfType: type) type {
-    return struct {
-        pub const Self = SelfType;
+const IAnimal = interface.ConstructInterface(struct {
+    pub const Self = @This();
 
-        pub fn make_sound(self: *const Self) []const u8 {
-            return interface.VirtualCall(self, "make_sound", .{}, []const u8);
-        }
-    };
-}
+    pub fn make_sound(self: *const Self) []const u8 {
+        return interface.VirtualCall(self, "make_sound", .{}, []const u8);
+    }
+});
 
-const IAnimal = interface.ConstructInterface(AnimalInterface);
+const Dog = interface.DeriveFromBase(IAnimal, struct {
+    pub const Self = @This();
 
-const Dog = packed struct {
-    pub usingnamespace interface.DeriveFromBase(IAnimal, Dog);
-
-    pub fn make_sound(self: *const Dog) []const u8 {
+    pub fn make_sound(self: *const Self) []const u8 {
         _ = self;
         return "Woof!";
     }
-};
+});
 
-const Cat = packed struct {
-    // Let's derive from IShape, this call constructs a vtable
-    pub usingnamespace interface.DeriveFromBase(IAnimal, Cat);
+const Cat = interface.DeriveFromBase(IAnimal, packed struct {
+    pub const Self = @This();
 
-    pub fn make_sound(self: *const Cat) []const u8 {
+    pub fn make_sound(self: *const Self) []const u8 {
         _ = self;
         return "Meow!";
     }
-};
+});
 
 fn make_sound(animal: IAnimal) []const u8 {
-    return animal.make_sound();
+    return animal.interface.make_sound();
 }
 
 test "simple interface" {
-    var cat: Cat = Cat{};
-    var dog: Dog = Dog{};
+    var cat: Cat = Cat.init(.{});
+    var dog: Dog = Dog.init(.{});
 
-    try std.testing.expectEqualStrings("Woof!", make_sound(dog.interface()));
-    try std.testing.expectEqualStrings("Meow!", make_sound(cat.interface()));
+    try std.testing.expectEqualStrings("Woof!", make_sound(dog.interface.create()));
+    try std.testing.expectEqualStrings("Meow!", make_sound(cat.interface.create()));
 }
