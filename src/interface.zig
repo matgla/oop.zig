@@ -223,7 +223,11 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
         pub const InterfaceType = chain[chain.len - 1];
 
         const Self = @This();
+
         pub fn create(ptr: *Self) InterfaceType {
+            if (comptime std.mem.indexOf(u8, @typeName(InterfaceType), "CountingInterface") != null) {
+                @compileError("Can't create static interface for CountingInterface");
+            }
             comptime var BaseType = Base;
             if (BaseType == null) {
                 BaseType = InterfaceType;
@@ -390,15 +394,21 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
         interface: SelfType = .{},
 
         pub fn __destructor(self: *Self) void {
-            self.__refcount.?.* -= 1;
+            if (self.__refcount != null) {
+                self.__refcount.?.* -= 1;
 
-            if (self.__refcount.?.* == 0) {
+                if (self.__refcount.?.* == 0) {
+                    if (@hasField(VTable, "delete")) {
+                        self.__vtable.delete.?(self.__ptr, .{});
+                    }
+                    if (self.__destroy) |destroy| {
+                        destroy.call(self.__ptr, destroy.allocator);
+                        destroy.allocator.destroy(self.__refcount.?);
+                    }
+                }
+            } else {
                 if (@hasField(VTable, "delete")) {
                     self.__vtable.delete.?(self.__ptr, .{});
-                }
-                if (self.__destroy) |destroy| {
-                    destroy.call(self.__ptr, destroy.allocator);
-                    destroy.allocator.destroy(self.__refcount.?);
                 }
             }
         }
