@@ -363,6 +363,7 @@ pub fn ConstructInterface(comptime SelfType: type) type {
         __ptr: *anyopaque,
         __destroy: ?DestroyHolder,
         interface: SelfType = .{},
+        pub const iface = Self.interface;
 
         pub fn __destructor(self: *Self) void {
             if (@hasField(VTable, "delete")) {
