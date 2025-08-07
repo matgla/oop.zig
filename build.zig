@@ -13,7 +13,8 @@ pub fn build(b: *std.Build) !void {
     });
 
     const exe_tests = b.addTest(.{
-        .root_source_file = b.path("tests/tests.zig"),
+        // .root_source_file = b.path("tests/tests.zig"),
+        .root_module = mod,
     });
     exe_tests.root_module.addImport("interface", mod);
 
@@ -29,12 +30,18 @@ pub fn build(b: *std.Build) !void {
         while (try it.next()) |entry| {
             if (entry.kind == .file) {
                 if (std.mem.endsWith(u8, entry.name, ".zig")) {
-                    const example_exe = b.addExecutable(
+                    const example_module = b.addModule(
+                        entry.name[0 .. entry.name.len - 4],
                         .{
-                            .name = entry.name[0 .. entry.name.len - 4],
                             .root_source_file = b.path(b.pathJoin(&.{ "examples", entry.name })),
                             .optimize = optimize,
                             .target = target,
+                        },
+                    );
+                    const example_exe = b.addExecutable(
+                        .{
+                            .name = entry.name[0 .. entry.name.len - 4],
+                            .root_module = example_module,
                         },
                     );
                     example_exe.root_module.addImport("interface", mod);
@@ -44,11 +51,9 @@ pub fn build(b: *std.Build) !void {
         }
     }
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "oop",
-        .root_source_file = b.path("src/root.zig"),
-        .optimize = optimize,
-        .target = target,
+        .root_module = mod,
     });
     const install_docs = b.addInstallDirectory(.{
         .source_dir = lib.getEmittedDocs(),
