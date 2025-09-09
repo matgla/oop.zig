@@ -247,7 +247,7 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
             object.* = parent.*;
             const release = struct {
                 fn call(p: *anyopaque, alloc: std.mem.Allocator) void {
-                    const self: *DeriveFromBase(BaseType.?, Derived) = @alignCast(@ptrCast(p));
+                    const self: *DeriveFromBase(BaseType.?, Derived) = @ptrCast(@alignCast(p));
                     alloc.destroy(self);
                 }
             };
@@ -420,6 +420,13 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
             }
 
             return self.*;
+        }
+
+        pub fn get_refcount(self: *Self) i32 {
+            if (self.__refcount) |r| {
+                return r.*;
+            }
+            return 1;
         }
     };
 }
