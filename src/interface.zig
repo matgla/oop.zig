@@ -21,9 +21,10 @@
 
 const std = @import("std");
 
-const DestroyHolder = struct {
+const MemFunctionsHolder = struct {
     allocator: std.mem.Allocator,
-    call: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator) void,
+    destroy: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator) void,
+    dupe: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator) ?*anyopaque,
 };
 
 fn deduce_type(info: anytype, object_type: anytype) type {
@@ -167,7 +168,7 @@ fn GenerateClass(comptime InterfaceType: type) type {
             return vtable;
         }
 
-        pub fn __init_chain(ptr: anytype, chain: []const type, destroy: ?DestroyHolder, reference_counter: ?*i32) InterfaceType.Self {
+        pub fn __init_chain(ptr: anytype, chain: []const type, memfunctions: ?MemFunctionsHolder, reference_counter: ?*i32) InterfaceType.Self {
             const gen_vtable = struct {
                 const Self = @TypeOf(ptr.*);
                 const vtable = __build_vtable_chain(chain);
@@ -177,14 +178,14 @@ fn GenerateClass(comptime InterfaceType: type) type {
                 return InterfaceType.Self{
                     .__vtable = &gen_vtable.vtable,
                     .__ptr = @ptrCast(ptr),
-                    .__destroy = destroy,
+                    .__memfunctions = memfunctions,
                     .__refcount = reference_counter,
                 };
             } else {
                 return InterfaceType.Self{
                     .__vtable = &gen_vtable.vtable,
                     .__ptr = @ptrCast(ptr),
-                    .__destroy = destroy,
+                    .__memfunctions = memfunctions,
                 };
             }
         }
@@ -251,9 +252,19 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
                     alloc.destroy(self);
                 }
             };
-            const destroy: DestroyHolder = .{
+            const dupe = struct {
+                fn call(p: *anyopaque, alloc: std.mem.Allocator) ?*anyopaque {
+                    const self: *DeriveFromBase(BaseType.?, Derived) = @ptrCast(@alignCast(p));
+                    const copy = alloc.create(DeriveFromBase(BaseType.?, Derived)) catch return null;
+                    copy.* = self.*;
+                    return copy;
+                }
+            };
+
+            const destroy: MemFunctionsHolder = .{
                 .allocator = allocator,
-                .call = &release.call,
+                .destroy = &release.call,
+                .dupe = &dupe.call,
             };
 
             var refcounter: ?*i32 = null;
@@ -361,7 +372,7 @@ pub fn ConstructInterface(comptime SelfType: type) type {
 
         __vtable: *const VTable,
         __ptr: *anyopaque,
-        __destroy: ?DestroyHolder,
+        __memfunctions: ?MemFunctionsHolder,
         interface: SelfType = .{},
         pub const iface = Self.interface;
 
@@ -369,9 +380,24 @@ pub fn ConstructInterface(comptime SelfType: type) type {
             if (@hasField(VTable, "delete")) {
                 self.__vtable.delete.?(self.__ptr, .{});
             }
-            if (self.__destroy) |destroy| {
-                destroy.call(self.__ptr, destroy.allocator);
+            if (self.__memfunctions) |memfuncs| {
+                memfuncs.destroy(self.__ptr, memfuncs.allocator);
             }
+        }
+
+        pub fn duplicate(self: *Self) !Self {
+            var new = self.*;
+            if (self.__memfunctions == null) {
+                return error.CannotDuplicateStaticInterface;
+            }
+
+            const newdata = self.__memfunctions.?.dupe(self.__ptr, self.__memfunctions.?.allocator);
+            if (newdata == null) {
+                return error.DuplicateFailed;
+            }
+            new.__ptr = newdata.?;
+
+            return new;
         }
     };
 }
@@ -390,7 +416,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
 
         __vtable: *const VTable,
         __ptr: *anyopaque,
-        __destroy: ?DestroyHolder,
+        __memfunctions: ?MemFunctionsHolder,
         __refcount: ?*i32,
         interface: SelfType = .{},
 
@@ -402,8 +428,8 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
                     if (@hasField(VTable, "delete")) {
                         self.__vtable.delete.?(self.__ptr, .{});
                     }
-                    if (self.__destroy) |destroy| {
-                        destroy.call(self.__ptr, destroy.allocator);
+                    if (self.__memfunctions) |destroy| {
+                        destroy.destroy(self.__ptr, destroy.allocator);
                         destroy.allocator.destroy(self.__refcount.?);
                     }
                 }
@@ -427,6 +453,25 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
                 return r.*;
             }
             return 1;
+        }
+
+        pub fn duplicate(self: *Self) !Self {
+            var new = self.*;
+            if (self.__memfunctions == null) {
+                return error.CannotDuplicateStaticInterface;
+            }
+
+            const newdata = self.__memfunctions.?.dupe(self.__ptr, self.__memfunctions.?.allocator);
+            if (newdata == null) {
+                return error.DuplicateFailed;
+            }
+            new.__ptr = newdata.?;
+
+            if (self.__refcount != null) {
+                new.__refcount = try self.__memfunctions.?.allocator.create(i32);
+                new.__refcount.?.* = 1;
+            }
+            return new;
         }
     };
 }

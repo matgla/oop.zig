@@ -12,9 +12,14 @@ pub fn build(b: *std.Build) !void {
         .target = target,
     });
 
+    const mod_tests = b.addModule("tests", .{
+        .root_source_file = b.path("tests/tests.zig"),
+        .optimize = optimize,
+        .target = target,
+    });
+
     const exe_tests = b.addTest(.{
-        // .root_source_file = b.path("tests/tests.zig"),
-        .root_module = mod,
+        .root_module = mod_tests,
     });
     exe_tests.root_module.addImport("interface", mod);
 

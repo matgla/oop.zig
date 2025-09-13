@@ -21,4 +21,6 @@ comptime {
     _ = @import("heap_allocation.zig");
     _ = @import("simple_interface.zig");
     _ = @import("shared.zig");
+    _ = @import("duplicate.zig");
+    _ = @import("duplicate_counting.zig");
 }
