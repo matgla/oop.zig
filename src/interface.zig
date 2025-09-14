@@ -390,7 +390,7 @@ pub fn ConstructInterface(comptime SelfType: type) type {
             }
         }
 
-        pub fn clone(self: *Self) !Self {
+        pub fn clone(self: *const Self) !Self {
             var new = self.*;
             if (self.__memfunctions == null) {
                 return error.CannotDuplicateStaticInterface;
@@ -460,7 +460,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
             return 1;
         }
 
-        pub fn clone(self: *Self) !Self {
+        pub fn clone(self: *const Self) !Self {
             var new = self.*;
             if (self.__memfunctions == null) {
                 return error.CannotDuplicateStaticInterface;
