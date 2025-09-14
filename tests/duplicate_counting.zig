@@ -43,9 +43,6 @@ const IShape = interface.ConstructCountingInterface(struct {
         return interface.CountingInterfaceVirtualCall(self, "get_size", .{}, u32);
     }
 
-    pub fn reset_some(self: *Self) void {
-        return interface.CountingInterfaceVirtualCall(self, "reset_some", .{}, void);
-    }
     // do not forget about virtual destructor
     pub fn delete(self: *Self) void {
         interface.CountingInterfaceDestructorCall(self);
@@ -79,15 +76,16 @@ const Triangle = interface.DeriveFromBase(IShape, struct {
         self.allocated = self.allocator.create(i32) catch return;
     }
 
-    pub fn reset_some(self: *Self) void {
-        self.allocated = null;
-    }
-
     pub fn delete(self: *Self) void {
         if (self.allocated) |allocated| {
             self.allocator.destroy(allocated);
             self.allocated = null;
         }
+    }
+
+    pub fn __clone(self: *const Self, new: *Self) void {
+        new.* = self.*;
+        new.allocated = null;
     }
 });
 
@@ -106,8 +104,7 @@ test "duplicated objects of counting interface should not be modified by other c
     defer shape2.interface.delete();
     var shape3 = shape1.share();
     defer shape3.interface.delete();
-    var shape4 = try shape1.duplicate();
-    shape4.interface.reset_some();
+    var shape4 = try shape1.clone();
     defer shape4.interface.delete();
 
     shape1.interface.set_size(10);

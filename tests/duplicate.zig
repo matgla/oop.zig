@@ -102,7 +102,7 @@ test "duplicated objects should not be modified by other copies" {
     })).interface.new(allocator);
     shape1.interface.allocate_some();
     defer shape1.interface.delete();
-    var shape4 = try shape1.duplicate();
+    var shape4 = try shape1.clone();
     shape4.interface.reset_some();
     defer shape4.interface.delete();
 

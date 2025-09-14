@@ -66,7 +66,7 @@ fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type
         .type = FinalType,
         .default_value_ptr = null,
         .is_comptime = false,
-        .alignment = 0,
+        .alignment = @alignOf(FinalType),
     };
 }
 
@@ -254,9 +254,14 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
             };
             const dupe = struct {
                 fn call(p: *anyopaque, alloc: std.mem.Allocator) ?*anyopaque {
-                    const self: *DeriveFromBase(BaseType.?, Derived) = @ptrCast(@alignCast(p));
-                    const copy = alloc.create(DeriveFromBase(BaseType.?, Derived)) catch return null;
-                    copy.* = self.*;
+                    const Type = DeriveFromBase(BaseType.?, Derived);
+                    const self: *Type = @ptrCast(@alignCast(p));
+                    const copy = alloc.create(Type) catch return null;
+                    if (@hasDecl(Derived, "__clone")) {
+                        self.__data.__clone(&copy.__data);
+                    } else {
+                        copy.* = self.*;
+                    }
                     return copy;
                 }
             };
@@ -385,7 +390,7 @@ pub fn ConstructInterface(comptime SelfType: type) type {
             }
         }
 
-        pub fn duplicate(self: *Self) !Self {
+        pub fn clone(self: *Self) !Self {
             var new = self.*;
             if (self.__memfunctions == null) {
                 return error.CannotDuplicateStaticInterface;
@@ -455,7 +460,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
             return 1;
         }
 
-        pub fn duplicate(self: *Self) !Self {
+        pub fn clone(self: *Self) !Self {
             var new = self.*;
             if (self.__memfunctions == null) {
                 return error.CannotDuplicateStaticInterface;
