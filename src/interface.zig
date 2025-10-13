@@ -472,14 +472,19 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
             }
             new.__ptr = newdata.?;
 
-            if (self.__refcount != null) {
-                new.__refcount = try self.__memfunctions.?.allocator.create(i32);
-                new.__refcount.?.* = 1;
+            if (self.__refcount) |r| {
+                r.* += 1;
             }
+
             return new;
+        }
+
+        pub fn as(self: *Self, comptime T: type) *T {
+            return @ptrCast(@alignCast(self.__ptr));
         }
     };
 }
+
 pub fn GetBase(self: anytype) decorate_with_const(@TypeOf(self), @TypeOf(self.*.base.__data)) {
     return &(self.*.base.__data);
 }
