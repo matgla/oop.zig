@@ -254,11 +254,11 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
             };
             const dupe = struct {
                 fn call(p: *anyopaque, alloc: std.mem.Allocator) ?*anyopaque {
-                    const Type = DeriveFromBase(BaseType.?, Derived);
-                    const self: *Derived = @ptrCast(@alignCast(p));
-                    const copy = alloc.create(Type) catch return null;
+                    const Type = Derived;
+                    const self: *Type = @ptrCast(@alignCast(p));
+                    var copy = alloc.create(Type) catch return null;
                     if (@hasDecl(Derived, "__clone")) {
-                        self.__data.__clone(&copy.__data);
+                        copy.__clone(self);
                     } else {
                         copy.* = self.*;
                     }

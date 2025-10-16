@@ -83,9 +83,9 @@ const Triangle = interface.DeriveFromBase(IShape, struct {
         }
     }
 
-    pub fn __clone(self: *const Self, new: *Self) void {
-        new.* = self.*;
-        new.allocated = null;
+    pub fn __clone(self: *Self, other: *Self) void {
+        self.* = other.*;
+        other.allocated = null;
     }
 });
 
