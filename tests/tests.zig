@@ -23,4 +23,5 @@ comptime {
     _ = @import("shared.zig");
     _ = @import("duplicate.zig");
     _ = @import("duplicate_counting.zig");
+    _ = @import("mock_object.zig");
 }
