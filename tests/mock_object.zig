@@ -47,7 +47,7 @@ const IShape = interface.ConstructCountingInterface(struct {
 
 const MockShape = interface.DeriveFromBase(IShape, struct {
     const Self = @This();
-    mock: *interface.MockTableType,
+    mock: *interface.MockTableType(IShape),
 
     pub fn create() MockShape {
         return MockShape.init(.{
@@ -72,19 +72,22 @@ const MockShape = interface.DeriveFromBase(IShape, struct {
     }
 });
 
+const ShapeMock = interface.mock.MockInterface(IShape);
+
 test "interface can be mocked for tests" {
-    var mock = MockShape.InstanceType.create();
-    var obj = try mock.interface.new(std.testing.allocator);
+    var mock = try ShapeMock.create(std.testing.allocator);
+    defer mock.delete();
+    var obj = mock.get_interface();
     defer obj.interface.delete();
 
-    _ = mock.data().mock
+    _ = mock
         .expectCall("area")
-        .willReturn(@as(i32, 10))
+        .willReturn(@as(u32, 10))
         .times(3);
 
-    _ = mock.data().mock
+    _ = mock
         .expectCall("area")
-        .willReturn(@as(i32, 15));
+        .willReturn(@as(u32, 15));
 
     try std.testing.expectEqual(10, obj.interface.area());
     try std.testing.expectEqual(10, obj.interface.area());
@@ -92,9 +95,129 @@ test "interface can be mocked for tests" {
 
     try std.testing.expectEqual(15, obj.interface.area());
 
-    _ = mock.data().mock
+    _ = mock
         .expectCall("set_size")
-        .withArgs(.{@as(u32, 150)});
+        .withArgs(.{interface.mock.any{}});
 
-    obj.interface.set_size(150);
+    _ = mock
+        .expectCall("set_size")
+        .withArgs(.{@as(u32, 101)});
+
+    // best match selection is used here
+    obj.interface.set_size(101);
+    obj.interface.set_size(102);
 }
+
+test "mock can be called any times" {
+    const any = interface.mock.any{};
+    var mock = try ShapeMock.create(std.testing.allocator);
+    defer mock.delete();
+    var obj = mock.get_interface();
+    defer obj.interface.delete();
+
+    _ = mock
+        .expectCall("area")
+        .willReturn(@as(u32, 10))
+        .times(any);
+
+    try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+}
+
+test "enforce sequence for tests" {
+    const any = interface.mock.any{};
+    var sequence = interface.mock.Sequence.init(std.testing.allocator);
+    var mock = try ShapeMock.create(std.testing.allocator);
+    defer mock.delete();
+    var obj = mock.get_interface();
+    defer obj.interface.delete();
+
+    _ = mock
+        .expectCall("area")
+        .willReturn(@as(u32, 10))
+        .times(3)
+        .inSequence(&sequence);
+
+    _ = mock
+        .expectCall("set_size")
+        .withArgs(.{@as(u32, 101)});
+
+    _ = mock
+        .expectCall("set_size")
+        .withArgs(.{any})
+        .inSequence(&sequence);
+
+    _ = mock
+        .expectCall("area")
+        .willReturn(@as(u32, 15))
+        .inSequence(&sequence);
+
+    try std.testing.expectEqual(10, obj.interface.area());
+
+    obj.interface.set_size(101);
+    try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+
+    obj.interface.set_size(102);
+
+    try std.testing.expectEqual(15, obj.interface.area());
+}
+
+test "mock can invoke callback function" {
+    var mock = try ShapeMock.create(std.testing.allocator);
+    defer mock.delete();
+    var obj = mock.get_interface();
+    defer obj.interface.delete();
+
+    // // Test callback that computes the return value
+    // // Use std.meta.Tuple with empty array to get the correct type
+    const areaCallback = struct {
+        fn call(args: std.meta.Tuple(&[_]type{})) anyerror!u32 {
+            _ = args;
+            return 123;
+        }
+    }.call;
+
+    _ = mock
+        .expectCall("area")
+        .invoke(areaCallback);
+
+    try std.testing.expectEqual(123, obj.interface.area());
+
+    // Test callback with arguments
+    const setSizeCallback = struct {
+        fn call(args: std.meta.Tuple(&[_]type{u32})) anyerror!void {
+            try std.testing.expectEqual(@as(u32, 999), args[0]);
+        }
+    }.call;
+
+    _ = mock
+        .expectCall("set_size")
+        .invoke(setSizeCallback);
+
+    obj.interface.set_size(999);
+}
+
+// test "mock invoke can be combined with withArgs" {
+//     var mock = try ShapeMock.create(std.testing.allocator);
+//     defer mock.delete();
+//     var obj = mock.get_interface();
+//     defer obj.interface.delete();
+
+//     const callback = struct {
+//         fn call(args: struct { u32 }) void {
+//             // Verify we got the expected argument
+//             std.testing.expectEqual(@as(u32, 42), args[0]) catch unreachable;
+//         }
+//     }.call;
+
+//     _ = mock
+//         .expectCall("set_size")
+//         .withArgs(.{@as(u32, 42)})
+//         .invoke(callback);
+
+//     obj.interface.set_size(42);
+// }

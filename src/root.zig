@@ -28,7 +28,4 @@ pub const CountingInterfaceDestructorCall = @import("interface.zig").CountingInt
 
 pub const base = @import("interface.zig").GetBase;
 
-pub const MockVirtualCall = @import("mock.zig").MockVirtualCall;
-pub const MockDestructorCall = @import("mock.zig").MockDestructorCall;
-pub const GenerateMockTable = @import("mock.zig").GenerateMockTable;
-pub const MockTableType = @import("mock.zig").MockTableType;
+pub const mock = @import("mock.zig");
