@@ -21,6 +21,6 @@ jobs:
       - name: Execute tests
         shell: bash
         run: |
-          export PATH="$HOME/.zvm/bin:$PATH"
+          export PATH="$HOME/.zvm/bin:$HOME/.zvm:$PATH"
           ./install_zig_with_zvm.sh
           zig build test --summary all
