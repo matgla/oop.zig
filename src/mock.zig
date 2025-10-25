@@ -61,11 +61,11 @@ fn deduce_type(comptime T: type) type {
 
 pub fn MockVirtualCall(self: anytype, comptime method_name: [:0]const u8, args: anytype, return_type: type) return_type {
     _ = args; // Suppress unused variable warning
-    if (!@hasField(deduce_type(@TypeOf(self)), "_mock")) {
-        @compileError("MockVirtualCall called on non-mock object, please add ._mock: interface.GenerateMockTable() to the derived mock struct");
+    if (!@hasField(deduce_type(@TypeOf(self)), "mock")) {
+        @compileError("MockVirtualCall called on non-mock object, please add .mock: interface.GenerateMockTable() to the derived mock struct");
     }
 
-    var expectations = self._mock.expectations.get(method_name) orelse {
+    var expectations = self.mock.expectations.getPtr(method_name) orelse {
         std.debug.print("No expectations found for method: {s}.{s}\n", .{ @typeName(deduce_type(@TypeOf(self))), method_name });
         unreachable;
     };
@@ -75,39 +75,114 @@ pub fn MockVirtualCall(self: anytype, comptime method_name: [:0]const u8, args: 
         unreachable;
     }
 
-    const list_node = expectations.popFirst() orelse unreachable;
-    var expectation = @as(*Expectation, @fieldParentPtr("_node", list_node));
-    defer self._mock.allocator.destroy(expectation);
-    if (expectation._return) |r| {
-        defer self._mock.allocator.destroy(@as(*return_type, @ptrCast(@alignCast(r))));
-        return expectation.getReturnValue(return_type);
-    } else {
-        std.debug.print("No return value set for method: {s}.{s}\n", .{ @typeName(deduce_type(@TypeOf(self))), method_name });
-        unreachable;
+    const list_node = expectations.first orelse unreachable;
+    const expectation = @as(*Expectation, @fieldParentPtr("_node", list_node));
+    expectation._times -= 1;
+    const ret = expectation.getReturnValue(return_type);
+    if (expectation._times == 0) {
+        defer self.mock.allocator.destroy(expectation);
+        if (expectation._return) |r| {
+            defer {
+                self.mock.allocator.destroy(@as(*return_type, @ptrCast(@alignCast(r))));
+                expectation._return = null;
+            }
+        }
+        expectations.remove(list_node);
     }
+    return ret;
 }
 
 pub fn MockDestructorCall(self: anytype) void {
-    if (!@hasField(deduce_type(@TypeOf(self)), "_mock")) {
-        @compileError("MockVirtualCall called on non-mock object, please add ._mock: interface.GenerateMockTable() to the derived mock struct");
+    if (!@hasField(deduce_type(@TypeOf(self)), "mock")) {
+        @compileError("MockVirtualCall called on non-mock object, please add .mock: interface.GenerateMockTable() to the derived mock struct");
     }
-    self._mock.expectations.deinit();
+    var it = self.mock.expectations.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.len() != 0) {
+            std.debug.print("Not all expectations were met for method: {s}.{s}\n", .{ @typeName(deduce_type(@TypeOf(self))), entry.key_ptr.* });
+        }
+        var list = entry.value_ptr;
+        while (list.pop()) |node| {
+            var expectation = @as(*Expectation, @fieldParentPtr("_node", node));
+            expectation.delete();
+        }
+    }
+    self.mock.expectations.deinit();
+    self.mock.allocator.destroy(self.mock);
+}
+
+const ArgMatcher = struct {
+    alignment: u8,
+    value_ptr: *anyopaque,
+    match: *const fn (*anyopaque, *anyopaque) bool,
+    deinit: *const fn (*anyopaque) void,
+};
+
+const ArgsMatcher = struct {
+    allocator: std.mem.Allocator,
+    args: std.ArrayList(ArgMatcher),
+
+    pub fn deinit(self: *ArgsMatcher) void {
+        self.args.deinit(self.allocator);
+    }
+};
+
+fn isTuple(comptime T: type) bool {
+    const info = @typeInfo(T);
+    return switch (info) {
+        .@"struct" => info.@"struct".is_tuple,
+        else => false,
+    };
 }
 
 const Expectation = struct {
     _allocator: std.mem.Allocator,
     _return: ?*anyopaque,
     _node: std.DoublyLinkedList.Node,
+    _deinit: ?*const fn (self: *Expectation) void,
+    _args_matcher: ArgsMatcher,
+    _times: i32,
 
-    pub fn willReturn(self: *Expectation, value: anytype) void {
+    pub fn willReturn(self: *Expectation, value: anytype) *Expectation {
         const return_object = self._allocator.create(@TypeOf(value)) catch unreachable;
         return_object.* = value;
         self._return = return_object;
+        const FunctorType = struct {
+            pub fn call(s: *Expectation) void {
+                if (s._return) |r| {
+                    s._allocator.destroy(@as(*@TypeOf(value), @ptrCast(@alignCast(r))));
+                    s._return = null;
+                }
+            }
+        };
+        self._deinit = &FunctorType.call;
+        return self;
+    }
+
+    pub fn times(self: *Expectation, count: i32) *Expectation {
+        self._times = count;
+        return self;
     }
 
     pub fn getReturnValue(self: *Expectation, return_type: type) return_type {
+        if (return_type == void) {
+            return;
+        }
         std.testing.expect(self._return != null) catch unreachable;
         return @as(*return_type, @ptrCast(@alignCast(self._return.?))).*;
+    }
+
+    pub fn withArgs(self: *Expectation, args: anytype) *Expectation {
+        if (!isTuple(@TypeOf(args))) {
+            @compileError("argument must be tuple for withArgs");
+        }
+        return self;
+    }
+
+    pub fn delete(self: *Expectation) void {
+        if (self._deinit) |deinit_fn| {
+            deinit_fn(self);
+        }
     }
 };
 
@@ -132,6 +207,9 @@ pub const MockTableType = struct {
             ._allocator = self.allocator,
             ._return = null,
             ._node = std.DoublyLinkedList.Node{},
+            ._deinit = null,
+            ._times = 1,
+            ._args_matcher = null,
         };
         _ = list.append(&expectation._node);
         return expectation;

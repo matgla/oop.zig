@@ -47,11 +47,11 @@ const IShape = interface.ConstructCountingInterface(struct {
 
 const MockShape = interface.DeriveFromBase(IShape, struct {
     const Self = @This();
-    _mock: *interface.MockTableType,
+    mock: *interface.MockTableType,
 
     pub fn create() MockShape {
         return MockShape.init(.{
-            ._mock = interface.GenerateMockTable(IShape, std.testing.allocator),
+            .mock = interface.GenerateMockTable(IShape, std.testing.allocator),
         });
     }
 
@@ -77,9 +77,24 @@ test "interface can be mocked for tests" {
     var obj = try mock.interface.new(std.testing.allocator);
     defer obj.interface.delete();
 
-    mock.data()._mock
+    _ = mock.data().mock
         .expectCall("area")
-        .willReturn(@as(i32, 10));
+        .willReturn(@as(i32, 10))
+        .times(3);
+
+    _ = mock.data().mock
+        .expectCall("area")
+        .willReturn(@as(i32, 15));
 
     try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+    try std.testing.expectEqual(10, obj.interface.area());
+
+    try std.testing.expectEqual(15, obj.interface.area());
+
+    _ = mock.data().mock
+        .expectCall("set_size")
+        .withArgs(.{@as(u32, 150)});
+
+    obj.interface.set_size(150);
 }
