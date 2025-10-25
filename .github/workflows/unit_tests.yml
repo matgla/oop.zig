@@ -13,14 +13,11 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: 'recursive'
-      - name: Install ZVM
-        shell: bash
-        run: |
-          curl https://raw.githubusercontent.com/tristanisham/zvm/master/install.sh | bash
-
       - name: Execute tests
         shell: bash
         run: |
+          curl https://raw.githubusercontent.com/tristanisham/zvm/master/install.sh | bash
+          ls -la $HOME/.zvm
           export PATH="$HOME/.zvm/bin:$HOME/.zvm:$PATH"
           ./install_zig_with_zvm.sh
           zig build test --summary all
