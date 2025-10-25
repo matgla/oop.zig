@@ -16,10 +16,11 @@ jobs:
       - name: Install ZVM
         shell: bash
         run: |
-          curl -fsSL https://raw.githubusercontent.com/hendriknielaender/zvm/main/install.sh | bash
+          curl https://raw.githubusercontent.com/tristanisham/zvm/master/install.sh | bash
 
       - name: Execute tests
         shell: bash
         run: |
-          export PATH="/home/user/.local/share/zvm/bin:$PATH"
+          export PATH="$HOME/.zvm/bin:$PATH"
+          ./install_zig_with_zvm.sh
           zig build test --summary all
