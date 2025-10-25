@@ -27,3 +27,5 @@ pub const CountingInterfaceVirtualCall = @import("interface.zig").CountingInterf
 pub const CountingInterfaceDestructorCall = @import("interface.zig").CountingInterfaceDestructorCall;
 
 pub const base = @import("interface.zig").GetBase;
+
+pub const mock = @import("mock.zig");

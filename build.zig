@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) !void {
 
     const exe_tests = b.addTest(.{
         .root_module = mod_tests,
+        .use_llvm = true,
     });
     exe_tests.root_module.addImport("interface", mod);
 
@@ -27,6 +28,8 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
+
+    b.installArtifact(exe_tests);
 
     if (enable_examples) {
         var iterable_dir = try std.fs.cwd().openDir("examples", .{ .iterate = true });

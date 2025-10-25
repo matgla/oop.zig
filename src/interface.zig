@@ -298,16 +298,6 @@ pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
         if (!@hasField(Derived, "base") or !(@FieldType(Derived, "base") == BaseType)) {
             @compileError("Deriving from a base instead of an interface requires a 'base' field in the derived type.");
         }
-        // // disallow fields override
-        // var base: ?type = BaseType;
-        // while (base != null) {
-        //     for (std.meta.fields(Derived)) |field| {
-        //         if (@hasField(base.?, field.name) and !std.mem.eql(u8, field.name, "base")) {
-        //             @compileError("Field already exists in the base: " ++ field.name);
-        //         }
-        //     }
-        //     base = base.?.Base;
-        // }
     };
 
     return struct {
@@ -331,10 +321,6 @@ pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
         pub fn data(self: *Self) *Derived {
             return &self.__data;
         }
-
-        // pub fn __destructor(self: *Self) void {
-        //     self.interface.__destructor(self.interface);
-        // }
     };
 }
 
