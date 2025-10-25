@@ -45,33 +45,6 @@ const IShape = interface.ConstructCountingInterface(struct {
     }
 });
 
-const MockShape = interface.DeriveFromBase(IShape, struct {
-    const Self = @This();
-    mock: *interface.MockTableType(IShape),
-
-    pub fn create() MockShape {
-        return MockShape.init(.{
-            .mock = interface.GenerateMockTable(IShape, std.testing.allocator),
-        });
-    }
-
-    pub fn area(self: *const Self) u32 {
-        return interface.MockVirtualCall(self, "area", .{}, u32);
-    }
-
-    pub fn set_size(self: *Self, new_size: u32) void {
-        return interface.MockVirtualCall(self, "set_size", .{new_size}, void);
-    }
-
-    pub fn allocate_some(self: *Self) void {
-        return interface.MockVirtualCall(self, "allocate_some", .{}, void);
-    }
-
-    pub fn delete(self: *Self) void {
-        interface.MockDestructorCall(self);
-    }
-});
-
 const ShapeMock = interface.mock.MockInterface(IShape);
 
 test "interface can be mocked for tests" {

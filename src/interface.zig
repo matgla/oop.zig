@@ -420,8 +420,8 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
                         self.__vtable.delete.?(self.__ptr, .{});
                     }
                     if (self.__memfunctions) |destroy| {
-                        destroy.destroy(self.__ptr, destroy.allocator);
                         destroy.allocator.destroy(self.__refcount.?);
+                        destroy.destroy(self.__ptr, destroy.allocator);
                     }
                 }
             } else {

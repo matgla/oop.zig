@@ -157,11 +157,6 @@ pub fn MockDestructorCall(self: anytype) !void {
         }
     }
     self.expectations.deinit();
-    if (@hasField(@TypeOf(self.interface), "__refcount")) {
-        if (self.interface.__refcount) |refcount| {
-            self.allocator.destroy(refcount);
-        }
-    }
 }
 
 // Type-erased argument matcher that can store any type
@@ -527,6 +522,21 @@ pub fn MockInterface(comptime InterfaceType: type) type {
 
             const self = try allocator.create(Self);
 
+            const release = struct {
+                fn call(p: *anyopaque, alloc: std.mem.Allocator) void {
+                    const s: *Self = @ptrCast(@alignCast(p));
+                    alloc.destroy(s);
+                }
+            };
+            const dupe = struct {
+                fn call(p: *anyopaque, alloc: std.mem.Allocator) ?*anyopaque {
+                    const s: *Self = @ptrCast(@alignCast(p));
+                    const copy = alloc.create(Self) catch return null;
+                    copy.* = s.*;
+                    return copy;
+                }
+            };
+
             if (@hasField(InterfaceType, "__refcount")) {
                 const refcount: *i32 = try allocator.create(i32);
                 refcount.* = 1;
@@ -535,7 +545,11 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     .interface = InterfaceType{
                         .__vtable = &gen_vtable.vtable,
                         .__ptr = self,
-                        .__memfunctions = null,
+                        .__memfunctions = .{
+                            .allocator = allocator,
+                            .destroy = &release.call,
+                            .dupe = &dupe.call,
+                        },
                         .__refcount = refcount,
                     },
                     .expectations = std.StringHashMap(std.DoublyLinkedList).init(allocator),
@@ -549,7 +563,11 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     .interface = InterfaceType{
                         .__vtable = &gen_vtable.vtable,
                         .__ptr = self,
-                        .__memfunctions = null,
+                        .__memfunctions = .{
+                            .allocator = allocator,
+                            .destroy = &release.call,
+                            .dupe = &dupe.call,
+                        },
                     },
                     .expectations = std.StringHashMap(std.DoublyLinkedList).init(allocator),
                 };
@@ -611,7 +629,7 @@ pub fn MockInterface(comptime InterfaceType: type) type {
         }
 
         pub fn delete(self: *Self) void {
-            self.allocator.destroy(self);
+            _ = self;
         }
     };
 }
