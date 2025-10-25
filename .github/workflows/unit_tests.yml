@@ -20,6 +20,6 @@ jobs:
 
       - name: Execute tests
         shell: bash
-        run:
+        run: |
           export PATH="/home/user/.local/share/zvm/bin:$PATH"
           zig build test --summary all
