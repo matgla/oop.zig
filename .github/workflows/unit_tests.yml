@@ -17,9 +17,9 @@ jobs:
         shell: bash
         run: |
           curl -fsSL https://raw.githubusercontent.com/hendriknielaender/zvm/main/install.sh | bash
-          export PATH="/home/user/.local/share/zvm/bin:$PATH"
 
       - name: Execute tests
         shell: bash
         run:
+          export PATH="/home/user/.local/share/zvm/bin:$PATH"
           zig build test --summary all
