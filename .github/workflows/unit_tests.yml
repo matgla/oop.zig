@@ -1,0 +1,25 @@
+name: oop.zig Unit Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  execute_unit_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+      - name: Install ZVM
+        shell: bash
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/hendriknielaender/zvm/main/install.sh | bash
+          export PATH="/home/user/.local/share/zvm/bin:$PATH"
+
+      - name: Execute tests
+        shell: bash
+        run:
+          zig build test --summary all
