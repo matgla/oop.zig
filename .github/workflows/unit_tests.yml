@@ -18,6 +18,6 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/tristanisham/zvm/master/install.sh | bash
           ls -la $HOME/.zvm
-          export PATH="$HOME/.zvm/bin:$HOME/.zvm:$PATH"
+          export PATH="$HOME/.zvm/bin:$HOME/.zvm/self:$PATH"
           ./install_zig_with_zvm.sh
           zig build test --summary all
