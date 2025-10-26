@@ -35,8 +35,8 @@ const IShape = interface.ConstructCountingInterface(struct {
         return interface.CountingInterfaceVirtualCall(self, "set_size", .{new_size}, void);
     }
 
-    pub fn allocate_some(self: *Self) void {
-        return interface.CountingInterfaceVirtualCall(self, "allocate_some", .{}, void);
+    pub fn allocate_some(self: *Self) anyerror!void {
+        return interface.CountingInterfaceVirtualCall(self, "allocate_some", .{}, anyerror!void);
     }
 
     pub fn pass_string(self: *Self, s: []const u8) void {
@@ -201,4 +201,16 @@ test "mock can handle string arguments" {
 
     obj.interface.pass_string("hello, world");
     obj.interface.pass_string("another string");
+}
+
+test "mock can handle anyerror!void return" {
+    var mock = try ShapeMock.create(std.testing.allocator);
+    defer mock.delete();
+    var obj = mock.get_interface();
+    defer obj.interface.delete();
+
+    _ = mock
+        .expectCall("allocate_some");
+
+    try obj.interface.allocate_some();
 }

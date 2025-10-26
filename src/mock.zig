@@ -320,10 +320,22 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
             return self;
         }
 
+        fn deduce_payload(comptime T: type) type {
+            var tp = T;
+            while (true) {
+                switch (@typeInfo(tp)) {
+                    .error_union => {
+                        tp = @typeInfo(tp).error_union.payload;
+                    },
+                    else => return tp,
+                }
+            }
+        }
+
         pub fn getReturnValue(self: *Self) ReturnType {
             // If callback is set, invoke it
             // Otherwise return the stored value
-            if (ReturnType == void) {
+            if (deduce_payload(ReturnType) == void) {
                 return;
             }
             std.debug.assert(self._return != null);
