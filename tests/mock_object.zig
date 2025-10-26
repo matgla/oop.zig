@@ -148,7 +148,8 @@ test "mock can invoke callback function" {
     // // Test callback that computes the return value
     // // Use std.meta.Tuple with empty array to get the correct type
     const areaCallback = struct {
-        fn call(args: std.meta.Tuple(&[_]type{})) anyerror!u32 {
+        fn call(ctx: ?*const anyopaque, args: std.meta.Tuple(&[_]type{})) anyerror!u32 {
+            _ = ctx;
             _ = args;
             return 123;
         }
@@ -156,41 +157,26 @@ test "mock can invoke callback function" {
 
     _ = mock
         .expectCall("area")
-        .invoke(areaCallback);
+        .invoke(areaCallback, null);
 
     try std.testing.expectEqual(123, obj.interface.area());
 
     // Test callback with arguments
     const setSizeCallback = struct {
-        fn call(args: std.meta.Tuple(&[_]type{u32})) anyerror!void {
+        fn call(context: ?*const anyopaque, args: std.meta.Tuple(&[_]type{u32})) anyerror!void {
+            try std.testing.expect(context != null);
+            if (context) |c| {
+                const value: *const u32 = @ptrCast(@alignCast(c));
+                try std.testing.expectEqual(123, value.*);
+            }
             try std.testing.expectEqual(@as(u32, 999), args[0]);
         }
     }.call;
 
+    const context: u32 = 123;
     _ = mock
         .expectCall("set_size")
-        .invoke(setSizeCallback);
+        .invoke(setSizeCallback, &context);
 
     obj.interface.set_size(999);
 }
-
-// test "mock invoke can be combined with withArgs" {
-//     var mock = try ShapeMock.create(std.testing.allocator);
-//     defer mock.delete();
-//     var obj = mock.get_interface();
-//     defer obj.interface.delete();
-
-//     const callback = struct {
-//         fn call(args: struct { u32 }) void {
-//             // Verify we got the expected argument
-//             std.testing.expectEqual(@as(u32, 42), args[0]) catch unreachable;
-//         }
-//     }.call;
-
-//     _ = mock
-//         .expectCall("set_size")
-//         .withArgs(.{@as(u32, 42)})
-//         .invoke(callback);
-
-//     obj.interface.set_size(42);
-// }

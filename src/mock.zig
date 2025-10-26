@@ -117,7 +117,7 @@ fn verify_mock_call(self: anytype, comptime method_name: [:0]const u8, args: any
         const expectation = @as(*Expectation(@TypeOf(args), ReturnType), @ptrCast(@alignCast(holder.expectation)));
         var ret: ReturnType = undefined;
         if (expectation._callback) |cb| {
-            ret = cb(args) catch unreachable;
+            ret = cb(expectation._callback_context, args) catch unreachable;
         } else {
             ret = expectation.getReturnValue();
         }
@@ -274,13 +274,14 @@ pub const ExpectationHolder = struct {
 pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
     return struct {
         const Self = @This();
-        const CallbackFn = *const fn (ArgsType) anyerror!ReturnType;
+        const CallbackFn = *const fn (?*const anyopaque, ArgsType) anyerror!ReturnType;
 
         _allocator: std.mem.Allocator,
         _return: ?ReturnType,
         _args_matcher: ?ArgsMatcher,
         _times: ?i32,
         _callback: ?CallbackFn,
+        _callback_context: ?*const anyopaque,
         _stack_trace: std.builtin.StackTrace,
         _sequence: ?*Sequence,
 
@@ -291,6 +292,7 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
                 ._args_matcher = null,
                 ._times = 1,
                 ._callback = null,
+                ._callback_context = null,
                 ._stack_trace = stacktrace,
                 ._sequence = null,
             };
@@ -312,8 +314,9 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
 
         /// Set a callback function to invoke when this expectation is matched
         /// The callback receives the arguments and can return a value
-        pub fn invoke(self: *Self, callback: CallbackFn) *Self {
+        pub fn invoke(self: *Self, callback: CallbackFn, context: ?*const anyopaque) *Self {
             self._callback = callback;
+            self._callback_context = context;
             return self;
         }
 
