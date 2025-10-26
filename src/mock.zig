@@ -511,8 +511,8 @@ pub fn MockInterface(comptime InterfaceType: type) type {
             return expectation;
         }
 
-        pub fn get_interface(self: *Self) *InterfaceType {
-            return &self.interface;
+        pub fn get_interface(self: *Self) InterfaceType {
+            return self.interface;
         }
 
         pub fn create(allocator: std.mem.Allocator) !*Self {
