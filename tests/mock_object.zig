@@ -39,6 +39,10 @@ const IShape = interface.ConstructCountingInterface(struct {
         return interface.CountingInterfaceVirtualCall(self, "allocate_some", .{}, void);
     }
 
+    pub fn pass_string(self: *Self, s: []const u8) void {
+        return interface.CountingInterfaceVirtualCall(self, "pass_string", .{s}, void);
+    }
+
     // do not forget about virtual destructor
     pub fn delete(self: *Self) void {
         interface.CountingInterfaceDestructorCall(self);
@@ -179,4 +183,22 @@ test "mock can invoke callback function" {
         .invoke(setSizeCallback, &context);
 
     obj.interface.set_size(999);
+}
+
+test "mock can handle string arguments" {
+    var mock = try ShapeMock.create(std.testing.allocator);
+    defer mock.delete();
+    var obj = mock.get_interface();
+    defer obj.interface.delete();
+
+    _ = mock
+        .expectCall("pass_string")
+        .withArgs(.{interface.mock.any{}});
+
+    _ = mock
+        .expectCall("pass_string")
+        .withArgs(.{"hello, world"});
+
+    obj.interface.pass_string("hello, world");
+    obj.interface.pass_string("another string");
 }

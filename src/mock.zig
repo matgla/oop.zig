@@ -191,7 +191,7 @@ const ArgMatcher = struct {
         stored.* = value;
 
         return ArgMatcher{
-            .value_ptr = stored,
+            .value_ptr = @ptrCast(stored),
             .match = ValueHolder.matchFn,
             .deinit = ValueHolder.deinitFn,
         };
