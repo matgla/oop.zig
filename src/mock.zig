@@ -335,7 +335,7 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
         pub fn getReturnValue(self: *Self) ReturnType {
             // If callback is set, invoke it
             // Otherwise return the stored value
-            if (deduce_payload(ReturnType) == void) {
+            if (self._return == null and deduce_payload(ReturnType) == void) {
                 return;
             }
             std.debug.assert(self._return != null);
