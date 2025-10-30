@@ -548,6 +548,8 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     const s: *Self = @ptrCast(@alignCast(p));
                     const copy = alloc.create(Self) catch return null;
                     copy.* = s.*;
+                    copy.expectations = std.StringHashMap(std.DoublyLinkedList).init(alloc);
+                    copy.interface.__ptr = copy;
                     return copy;
                 }
             };
