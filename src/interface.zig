@@ -390,6 +390,10 @@ pub fn ConstructInterface(comptime SelfType: type) type {
 
             return new;
         }
+
+        pub fn as(self: *Self, comptime T: type) *T {
+            return @ptrCast(@alignCast(self.__ptr));
+        }
     };
 }
 
