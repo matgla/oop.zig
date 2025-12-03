@@ -100,7 +100,7 @@ fn verify_mock_call(self: anytype, comptime method_name: [:0]const u8, args: any
     };
 
     if (expectations.len() == 0) {
-        std.debug.print("No more expectations left for method: {s}.{s}\n", .{ @typeName(deduce_type(@TypeOf(self))), method_name });
+        std.debug.print("No more expectations left for method: {s}.{s}, called with: {any}\n", .{ @typeName(deduce_type(@TypeOf(self))), method_name, args });
         unreachable;
     }
 
@@ -142,6 +142,11 @@ fn verify_mock_call(self: anytype, comptime method_name: [:0]const u8, args: any
 }
 
 pub fn MockDestructorCall(self: anytype) !void {
+    self.ref_counter.* -= 1;
+    if (self.ref_counter.* > 0) {
+        return;
+    }
+
     var it = self.expectations.iterator();
     // clean expectation with any times call
     while (it.next()) |entry| {
@@ -156,7 +161,10 @@ pub fn MockDestructorCall(self: anytype) !void {
             node_it = next_node;
         }
     }
+
+    self.allocator.destroy(self.ref_counter);
     self.expectations.deinit();
+    self.allocator.destroy(self.expectations);
 }
 
 // Type-erased argument matcher that can store any type
@@ -456,7 +464,8 @@ pub fn MockInterface(comptime InterfaceType: type) type {
         const Self = @This();
         allocator: std.mem.Allocator,
         interface: InterfaceType,
-        expectations: std.StringHashMap(std.DoublyLinkedList),
+        expectations: *std.StringHashMap(std.DoublyLinkedList),
+        ref_counter: *i32,
 
         // Helper to extract function signature types from VTable
         fn getMethodTypes(comptime method_name: [:0]const u8) struct { args: type, ret: type } {
@@ -498,7 +507,6 @@ pub fn MockInterface(comptime InterfaceType: type) type {
             const types = getMethodTypes(method_name);
             const ArgsType = types.args;
             const ReturnType = types.ret;
-
             var list = self.expectations.getPtr(method_name) orelse blk: {
                 self.expectations.put(method_name, std.DoublyLinkedList{}) catch unreachable;
                 break :blk self.expectations.getPtr(method_name) orelse unreachable;
@@ -536,6 +544,8 @@ pub fn MockInterface(comptime InterfaceType: type) type {
             };
 
             const self = try allocator.create(Self);
+            const refcount_mock: *i32 = try allocator.create(i32);
+            refcount_mock.* = 1;
 
             const release = struct {
                 fn call(p: *anyopaque, alloc: std.mem.Allocator) void {
@@ -548,7 +558,7 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     const s: *Self = @ptrCast(@alignCast(p));
                     const copy = alloc.create(Self) catch return null;
                     copy.* = s.*;
-                    copy.expectations = std.StringHashMap(std.DoublyLinkedList).init(alloc);
+                    copy.ref_counter.* += 1;
                     copy.interface.__ptr = copy;
                     return copy;
                 }
@@ -569,8 +579,10 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                         },
                         .__refcount = refcount,
                     },
-                    .expectations = std.StringHashMap(std.DoublyLinkedList).init(allocator),
+                    .expectations = try allocator.create(std.StringHashMap(std.DoublyLinkedList)),
+                    .ref_counter = refcount_mock,
                 };
+                self.expectations.* = std.StringHashMap(std.DoublyLinkedList).init(allocator);
                 inline for (std.meta.fields(InterfaceType.VTable)) |field| {
                     self.expectations.put(field.name, std.DoublyLinkedList{}) catch unreachable;
                 }
@@ -586,8 +598,10 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                             .dupe = &dupe.call,
                         },
                     },
-                    .expectations = std.StringHashMap(std.DoublyLinkedList).init(allocator),
+                    .expectations = try allocator.create(std.StringHashMap(std.DoublyLinkedList)),
+                    .ref_counter = refcount_mock,
                 };
+                self.expectations.* = std.StringHashMap(std.DoublyLinkedList).init(allocator);
                 inline for (std.meta.fields(InterfaceType.VTable)) |field| {
                     self.expectations.put(field.name, std.DoublyLinkedList{}) catch unreachable;
                 }
