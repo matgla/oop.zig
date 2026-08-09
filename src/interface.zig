@@ -28,67 +28,70 @@ const MemFunctionsHolder = struct {
 };
 
 fn deduce_type(info: anytype, object_type: anytype) type {
-    if (info.pointer.is_const) {
+    if (info.pointer.attrs.@"const") {
         return *const object_type;
     }
     return *object_type;
 }
 
 fn prune_type_info(info: anytype) type {
-    if (info.pointer.is_const) {
+    if (info.pointer.attrs.@"const") {
         return *const anyopaque;
     }
     return *anyopaque;
 }
 
 fn get_vcall_args(comptime fun: anytype) type {
-    const params = @typeInfo(@TypeOf(fun)).@"fn".params;
-    if (params.len == 0) {
+    // Zig 0.17 replaced `Type.Fn.params` (a slice of structs with `.type`) with
+    // parallel `param_types`/`param_attrs` slices.
+    const param_types = @typeInfo(@TypeOf(fun)).@"fn".param_types;
+    if (param_types.len == 0) {
         return .{};
     }
     comptime var args: []const type = &.{}; // The first parameter is always the object pointer
-    for (params[1..]) |param| {
-        const arg: []const type = &.{param.type.?};
+    for (param_types[1..]) |param_type| {
+        const arg: []const type = &.{param_type.?};
         args = args ++ arg;
     }
-    return std.meta.Tuple(args);
+    // `std.meta.Tuple` is gone in Zig 0.17; `@Tuple` is the builtin equivalent.
+    return @Tuple(args);
 }
 
-fn genVTableEntry(comptime Method: anytype, name: [:0]const u8) std.builtin.Type.StructField {
-    const MethodType = @TypeOf(Method);
-    const SelfType = @typeInfo(MethodType).@"fn".params[0].type.?;
-    const Type = prune_type_info(@typeInfo(SelfType));
-    const ReturnType = @typeInfo(@TypeOf(Method)).@"fn".return_type.?;
-    const TupleArgs = get_vcall_args(Method);
-    const FinalType = ?*const fn (ptr: Type, args: TupleArgs) ReturnType;
-    return .{
-        .name = name,
-        .type = FinalType,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf(FinalType),
-    };
+// Zig 0.17 removed `@Type`; struct synthesis is now `@Struct(layout,
+// backing_int, field_names, field_types, field_attrs)`, which takes parallel
+// name/type slices instead of `std.builtin.Type.StructField` values. So this
+// yields just the field type and BuildVTable collects names separately.
+fn erasedFnType(comptime Method: anytype) type {
+    const info = @typeInfo(@TypeOf(Method)).@"fn";
+    const ErasedSelf = prune_type_info(@typeInfo(info.param_types[0].?));
+    comptime var params: []const type = &.{ErasedSelf};
+    inline for (info.param_types[1..]) |param_type| {
+        params = params ++ &[_]type{param_type.?};
+    }
+    return @Fn(params, &@splat(.{}), info.return_type.?, .{});
+}
+
+fn genVTableEntryType(comptime Method: anytype) type {
+    return ?*const erasedFnType(Method);
 }
 
 fn BuildVTable(comptime InterfaceType: anytype) type {
-    comptime var fields: []const std.builtin.Type.StructField = &[_]std.builtin.Type.StructField{};
-    inline for (std.meta.declarations(InterfaceType)) |d| {
-        if (std.meta.hasMethod(InterfaceType, d.name)) {
-            const Method = @field(InterfaceType, d.name);
-            fields = fields ++ &[_]std.builtin.Type.StructField{genVTableEntry(Method, d.name)};
+    comptime var names: []const [:0]const u8 = &.{};
+    comptime var types: []const type = &.{};
+    // `std.meta.declarations` yields names directly in Zig 0.17, not
+    // `Declaration` structs with a `.name` field.
+    inline for (std.meta.declarations(InterfaceType)) |decl_name| {
+        if (std.meta.hasMethod(InterfaceType, decl_name)) {
+            const Method = @field(InterfaceType, decl_name);
+            names = names ++ &[_][:0]const u8{decl_name};
+            types = types ++ &[_]type{genVTableEntryType(Method)};
         }
     }
-
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .is_tuple = false,
-        .fields = fields,
-        .decls = &.{},
-    } });
+    return @Struct(.auto, null, names, types, &@splat(.{}));
 }
 
 fn decorate_with_const(comptime T: type, comptime BaseType: type) type {
-    if (@typeInfo(T).pointer.is_const) {
+    if (@typeInfo(T).pointer.attrs.@"const") {
         return *const BaseType;
     } else {
         return *BaseType;
@@ -96,40 +99,76 @@ fn decorate_with_const(comptime T: type, comptime BaseType: type) type {
 }
 
 fn gen_vcall(Type: type, ArgsType: anytype, name: []const u8, index: u32, ObjectType: type) type {
-    return struct {
-        const RetType = @typeInfo(@TypeOf(ArgsType)).@"fn".return_type.?;
-        const Params = @typeInfo(@TypeOf(ArgsType)).@"fn".params;
-        const SelfType = Params[0].type.?;
-        comptime {
-            if (@typeInfo(SelfType) != .pointer) {
-                @compileError("First argument of virtual function must be a pointer to the object type, failed for: " ++ @typeName(Type) ++ "::" ++ name ++ " with self type: " ++ @typeName(SelfType));
-            }
-        }
+    const info = @typeInfo(@TypeOf(ArgsType)).@"fn";
+    const SelfType = info.param_types[0].?;
+    const Erased = prune_type_info(@typeInfo(SelfType));
+    const R = info.return_type.?;
+    const P = info.param_types;
 
-        fn call(ptr: prune_type_info(@typeInfo(SelfType)), call_params: get_vcall_args(ArgsType)) RetType {
-            std.debug.assert(@typeInfo(SelfType) == .pointer);
+    comptime {
+        if (@typeInfo(SelfType) != .pointer) {
+            @compileError("First argument of virtual function must be a pointer to the object type, failed for: " ++ @typeName(Type) ++ "::" ++ name ++ " with self type: " ++ @typeName(SelfType));
+        }
+    }
+
+    const Resolve = struct {
+        inline fn invoke(ptr: Erased, call_params: anytype) R {
             const self: decorate_with_const(SelfType, Type) = @ptrCast(@alignCast(ptr));
-            if (index == 0 or std.mem.eql(u8, name, "delete")) {
+            if (comptime (index == 0 or std.mem.eql(u8, name, "delete"))) {
                 return @call(.auto, @field(Type, name), .{self} ++ call_params);
             } else {
-                // seek for parent that has the method
                 comptime var ChildType = ObjectType;
                 var base: decorate_with_const(SelfType, anyopaque) = self;
                 inline while (@hasField(ChildType, "base")) {
                     const BaseType = ChildType;
                     ChildType = @FieldType(@FieldType(ChildType, "base"), "__data");
                     base = &@field(@as(decorate_with_const(SelfType, BaseType), @ptrCast(@alignCast(base))), "base");
-                    // base = &@field(@as(decorate_with_const(SelfType, BaseType), @ptrCast(@alignCast(base))), "base");
-                    // if child has the method then it's the one we want
                     if (@hasDecl(ChildType, name)) {
-                        // for (0..index) |_| {
-                        // base = &@as(BaseType, @ptrCast(base)).base;
-                        return @call(.auto, @field(ChildType, name), .{@as(decorate_with_const(@TypeOf(ptr), ChildType), @ptrCast(@alignCast(base)))} ++ call_params);
+                        return @call(.auto, @field(ChildType, name), .{@as(decorate_with_const(Erased, ChildType), @ptrCast(@alignCast(base)))} ++ call_params);
                     }
                 }
                 @compileError("Parent not found for function: '" ++ name ++ "' in '" ++ @typeName(ObjectType) ++ "'");
             }
         }
+    };
+
+    return switch (P.len) {
+        1 => struct {
+            fn call(p: Erased) R {
+                return Resolve.invoke(p, .{});
+            }
+        },
+        2 => struct {
+            fn call(p: Erased, a0: P[1].?) R {
+                return Resolve.invoke(p, .{a0});
+            }
+        },
+        3 => struct {
+            fn call(p: Erased, a0: P[1].?, a1: P[2].?) R {
+                return Resolve.invoke(p, .{ a0, a1 });
+            }
+        },
+        4 => struct {
+            fn call(p: Erased, a0: P[1].?, a1: P[2].?, a2: P[3].?) R {
+                return Resolve.invoke(p, .{ a0, a1, a2 });
+            }
+        },
+        5 => struct {
+            fn call(p: Erased, a0: P[1].?, a1: P[2].?, a2: P[3].?, a3: P[4].?) R {
+                return Resolve.invoke(p, .{ a0, a1, a2, a3 });
+            }
+        },
+        6 => struct {
+            fn call(p: Erased, a0: P[1].?, a1: P[2].?, a2: P[3].?, a3: P[4].?, a4: P[5].?) R {
+                return Resolve.invoke(p, .{ a0, a1, a2, a3, a4 });
+            }
+        },
+        7 => struct {
+            fn call(p: Erased, a0: P[1].?, a1: P[2].?, a2: P[3].?, a3: P[4].?, a4: P[5].?, a5: P[6].?) R {
+                return Resolve.invoke(p, .{ a0, a1, a2, a3, a4, a5 });
+            }
+        },
+        else => @compileError("interface: virtual method '" ++ name ++ "' has more parameters than gen_vcall supports; add another arity above"),
     };
 }
 
@@ -137,8 +176,8 @@ fn GenerateClass(comptime InterfaceType: type) type {
     return struct {
         fn __build_vtable_chain(chain: []const type) InterfaceType.Self.VTable {
             var vtable: InterfaceType.Self.VTable = undefined;
-            for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
-                @field(vtable, field.name) = null; // Initialize all fields to null
+            inline for (@typeInfo(InterfaceType.Self.VTable).@"struct".field_names) |field_name| {
+                @field(vtable, field_name) = null; // Initialize all fields to null
             }
             var index: isize = chain.len - 1;
             inline while (index >= 0) : (index -= 1) {
@@ -146,33 +185,40 @@ fn GenerateClass(comptime InterfaceType: type) type {
                 comptime if (@hasField(chain[index], "__data")) {
                     base = @FieldType(chain[index], "__data");
                 };
-                for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
-                    if (std.meta.hasMethod(base, field.name)) {
-                        const field_type = @field(base, field.name);
-                        const vcall = gen_vcall(base, field_type, field.name, index, chain[0]);
+                inline for (@typeInfo(InterfaceType.Self.VTable).@"struct".field_names) |field_name| {
+                    if (std.meta.hasMethod(base, field_name)) {
+                        const field_type = @field(base, field_name);
+                        const vcall = gen_vcall(base, field_type, field_name, index, chain[0]);
                         const VTableCallType = *const @TypeOf(vcall.call);
-                        const VTableEntryType = @typeInfo(@TypeOf(@field(vtable, field.name))).optional.child;
+                        const VTableEntryType = @typeInfo(@TypeOf(@field(vtable, field_name))).optional.child;
                         if (VTableCallType != VTableEntryType) {
-                            @compileError("Virtual call type mismatch for '" ++ field.name ++ "' in interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Expected: " ++ @typeName(VTableEntryType) ++ "\n" ++ "Got:      " ++ @typeName(VTableCallType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
+                            @compileError("Virtual call type mismatch for '" ++ field_name ++ "' in interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Expected: " ++ @typeName(VTableEntryType) ++ "\n" ++ "Got:      " ++ @typeName(VTableCallType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
                         }
-                        @field(vtable, field.name) = vcall.call;
+                        @field(vtable, field_name) = vcall.call;
                     }
                 }
             }
 
-            inline for (std.meta.fields(InterfaceType.Self.VTable)) |field| {
-                if (@field(vtable, field.name) == null) {
-                    @compileError("Pure virtual function '" ++ field.name ++ "' for interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
+            inline for (@typeInfo(InterfaceType.Self.VTable).@"struct".field_names) |field_name| {
+                if (@field(vtable, field_name) == null) {
+                    @compileError("Pure virtual function '" ++ field_name ++ "' for interface: " ++ @typeName(InterfaceType) ++ "\n" ++ "Chain: " ++ std.fmt.comptimePrint("{any}", .{chain}));
                 }
             }
             return vtable;
         }
 
-        pub fn __init_chain(ptr: anytype, chain: []const type, memfunctions: ?MemFunctionsHolder, reference_counter: ?*i32) InterfaceType.Self {
-            const gen_vtable = struct {
-                const Self = @TypeOf(ptr.*);
+        // Zig 0.17 forbids a container-level decl inside a function from
+        // referencing that function's parameters ('chain' not accessible outside
+        // function scope). Routing it through a generic function makes `chain` a
+        // comptime type parameter, which the returned struct may capture.
+        fn VTableHolder(comptime chain: []const type) type {
+            return struct {
                 const vtable = __build_vtable_chain(chain);
             };
+        }
+
+        pub fn __init_chain(ptr: anytype, comptime chain: []const type, memfunctions: ?MemFunctionsHolder, reference_counter: ?*i32) InterfaceType.Self {
+            const gen_vtable = VTableHolder(chain);
 
             if (@hasField(InterfaceType.Self, "__refcount")) {
                 return InterfaceType.Self{
@@ -309,11 +355,11 @@ pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
 
         pub fn init(init_data: anytype) Self {
             var obj: @This() = undefined;
-            inline for (std.meta.fields(Derived)) |f| {
-                if (!@hasField(@TypeOf(init_data), f.name)) {
-                    @compileError("Initializer for " ++ @typeName(Derived) ++ " has no field ." ++ f.name);
+            inline for (@typeInfo(Derived).@"struct".field_names) |f_name| {
+                if (!@hasField(@TypeOf(init_data), f_name)) {
+                    @compileError("Initializer for " ++ @typeName(Derived) ++ " has no field ." ++ f_name);
                 }
-                @field(obj.__data, f.name) = @field(init_data, f.name);
+                @field(obj.__data, f_name) = @field(init_data, f_name);
             }
             return obj;
         }
@@ -332,7 +378,7 @@ pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
 /// `ReturnType` is the type of the return value of the method.
 pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
     const parent: decorate_with_const(@TypeOf(self), ConstructInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
-    return @field(parent.__vtable, name).?(parent.__ptr, args);
+    return @call(.auto, @field(parent.__vtable, name).?, .{parent.__ptr} ++ args);
 }
 
 pub fn DestructorCall(self: anytype) void {
@@ -342,7 +388,7 @@ pub fn DestructorCall(self: anytype) void {
 
 pub fn CountingInterfaceVirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
     const parent: decorate_with_const(@TypeOf(self), ConstructCountingInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
-    return @field(parent.__vtable, name).?(parent.__ptr, args);
+    return @call(.auto, @field(parent.__vtable, name).?, .{parent.__ptr} ++ args);
 }
 
 pub fn CountingInterfaceDestructorCall(self: anytype) void {
@@ -369,7 +415,7 @@ pub fn ConstructInterface(comptime SelfType: type) type {
 
         pub fn __destructor(self: *Self) void {
             if (@hasField(VTable, "delete")) {
-                self.__vtable.delete.?(self.__ptr, .{});
+                self.__vtable.delete.?(self.__ptr);
             }
             if (self.__memfunctions) |memfuncs| {
                 memfuncs.destroy(self.__ptr, memfuncs.allocator);
@@ -421,7 +467,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
 
                 if (self.__refcount.?.* == 0) {
                     if (@hasField(VTable, "delete")) {
-                        self.__vtable.delete.?(self.__ptr, .{});
+                        self.__vtable.delete.?(self.__ptr);
                     }
                     if (self.__memfunctions) |destroy| {
                         destroy.allocator.destroy(self.__refcount.?);
@@ -430,7 +476,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
                 }
             } else {
                 if (@hasField(VTable, "delete")) {
-                    self.__vtable.delete.?(self.__ptr, .{});
+                    self.__vtable.delete.?(self.__ptr);
                 }
             }
         }
