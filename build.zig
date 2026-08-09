@@ -32,10 +32,10 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(exe_tests);
 
     if (enable_examples) {
-        var iterable_dir = try std.fs.cwd().openDir("examples", .{ .iterate = true });
-        defer iterable_dir.close();
+        var iterable_dir = try std.Io.Dir.cwd().openDir(b.graph.io, "examples", .{ .iterate = true });
+        defer iterable_dir.close(b.graph.io);
         var it = iterable_dir.iterate();
-        while (try it.next()) |entry| {
+        while (try it.next(b.graph.io)) |entry| {
             if (entry.kind == .file) {
                 if (std.mem.endsWith(u8, entry.name, ".zig")) {
                     const example_module = b.addModule(

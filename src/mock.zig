@@ -65,9 +65,9 @@ fn find_best_expectation(ExpectationType: type, expectations: *std.DoublyLinkedL
             }
 
             std.debug.print("Sequence was broken due to the call\n", .{});
-            std.debug.dumpCurrentStackTrace(null);
+            std.debug.dumpCurrentStackTrace(.{});
             std.debug.print("Expectation set at:\n", .{});
-            std.debug.dumpStackTrace(expectation._stack_trace);
+            std.debug.dumpStackTrace(&expectation._stack_trace);
             std.debug.print("Required in sequence call:\n", .{});
             seq.dumpExpectation();
             return error.SequenceBroken;
@@ -237,14 +237,14 @@ const ArgsMatcher = struct {
     }
 
     pub fn matchesArgs(self: *const ArgsMatcher, args: anytype) i32 {
-        const fields = std.meta.fields(@TypeOf(args));
+        const fields = @typeInfo(@TypeOf(args)).@"struct".field_names;
         var total_score: i32 = 0;
         if (fields.len != self.matchers.items.len) {
             return 0;
         }
 
-        inline for (fields, 0..) |field, i| {
-            const value: i32 = self.matchers.items[i].matches(@field(args, field.name));
+        inline for (fields, 0..) |field_name, i| {
+            const value: i32 = self.matchers.items[i].matches(@field(args, field_name));
             if (value == 0) {
                 return 0;
             }
@@ -290,10 +290,13 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
         _times: ?i32,
         _callback: ?CallbackFn,
         _callback_context: ?*const anyopaque,
-        _stack_trace: std.builtin.StackTrace,
+        _stack_trace: std.debug.StackTrace,
+        /// Backing allocation for `_stack_trace.return_addresses`, which is only
+        /// a prefix of it -- freeing the trace slice directly is a bad free.
+        _stack_addr_buf: []usize,
         _sequence: ?*Sequence,
 
-        pub fn init(allocator: std.mem.Allocator, stacktrace: std.builtin.StackTrace) Self {
+        pub fn init(allocator: std.mem.Allocator, stacktrace: std.debug.StackTrace, addr_buf: []usize) Self {
             return Self{
                 ._allocator = allocator,
                 ._return = null,
@@ -302,6 +305,7 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
                 ._callback = null,
                 ._callback_context = null,
                 ._stack_trace = stacktrace,
+                ._stack_addr_buf = addr_buf,
                 ._sequence = null,
             };
         }
@@ -352,9 +356,9 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
 
         pub fn withArgs(self: *Self, args: anytype) *Self {
             var matcher = ArgsMatcher.init(self._allocator);
-            const fields = std.meta.fields(@TypeOf(args));
-            inline for (fields) |field| {
-                matcher.addMatcher(field.type, @field(args, field.name)) catch unreachable;
+            const info = @typeInfo(@TypeOf(args)).@"struct";
+            inline for (info.field_names, info.field_types) |field_name, field_type| {
+                matcher.addMatcher(field_type, @field(args, field_name)) catch unreachable;
             }
             self._args_matcher = matcher;
             return self;
@@ -375,7 +379,7 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
             if (self._times) |t| {
                 errdefer {
                     std.debug.print("Expectation not met times: {d} for: \n", .{t});
-                    std.debug.dumpStackTrace(self._stack_trace);
+                    std.debug.dumpStackTrace(&self._stack_trace);
                 }
                 try std.testing.expectEqual(t, 0);
             }
@@ -385,13 +389,13 @@ pub fn Expectation(comptime ArgsType: type, comptime ReturnType: type) type {
             if (self._args_matcher) |*matcher| {
                 matcher.deinit();
             }
-            self._allocator.free(self._stack_trace.instruction_addresses);
+            self._allocator.free(self._stack_addr_buf);
             self._allocator.destroy(self);
         }
 
         pub fn dumpStackTrace(ctx: *anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            std.debug.dumpStackTrace(self._stack_trace);
+            std.debug.dumpStackTrace(&self._stack_trace);
         }
 
         pub fn inSequence(self: *Self, sequence: *Sequence) *Self {
@@ -469,10 +473,10 @@ pub fn MockInterface(comptime InterfaceType: type) type {
 
         // Helper to extract function signature types from VTable
         fn getMethodTypes(comptime method_name: [:0]const u8) struct { args: type, ret: type } {
-            const vtable_fields = std.meta.fields(InterfaceType.VTable);
-            inline for (vtable_fields) |field| {
-                if (std.mem.eql(u8, field.name, method_name)) {
-                    const field_type_info = @typeInfo(field.type);
+            const vt = @typeInfo(InterfaceType.VTable).@"struct";
+            inline for (vt.field_names, vt.field_types) |field_name, field_type| {
+                if (std.mem.eql(u8, field_name, method_name)) {
+                    const field_type_info = @typeInfo(field_type);
 
                     // Handle optional pointer: ?*const fn(...)
                     const fn_info = switch (field_type_info) {
@@ -493,11 +497,11 @@ pub fn MockInterface(comptime InterfaceType: type) type {
 
                     // Build tuple type from parameters (skip self parameter)
                     comptime var arg_types: []const type = &[_]type{};
-                    inline for (fn_info.params[1..]) |param| {
-                        arg_types = arg_types ++ [_]type{param.type.?};
+                    inline for (fn_info.param_types[1..]) |param_type| {
+                        arg_types = arg_types ++ [_]type{param_type.?};
                     }
 
-                    return .{ .args = arg_types[0], .ret = return_type };
+                    return .{ .args = @Tuple(arg_types), .ret = return_type };
                 }
             }
             @compileError("Method '" ++ method_name ++ "' not found in interface VTable");
@@ -514,14 +518,13 @@ pub fn MockInterface(comptime InterfaceType: type) type {
 
             const ExpectationType = Expectation(ArgsType, ReturnType);
             const expectation = self.allocator.create(ExpectationType) catch unreachable;
-            var stacktrace: std.builtin.StackTrace = .{
-                .index = 0,
-                .instruction_addresses = self.allocator.alloc(usize, 32) catch unreachable,
-            };
+            // Zig 0.17 replaced `captureStackTrace(first_addr, *StackTrace)` with
+            // `captureCurrentStackTrace(options, addr_buf)`, which fills a caller
+            // buffer and returns the trace.
+            const addr_buf = self.allocator.alloc(usize, 32) catch unreachable;
+            const stacktrace = std.debug.captureCurrentStackTrace(.{}, addr_buf);
 
-            std.debug.captureStackTrace(null, &stacktrace);
-
-            expectation.* = ExpectationType.init(self.allocator, stacktrace);
+            expectation.* = ExpectationType.init(self.allocator, stacktrace, addr_buf);
 
             const holder = self.allocator.create(ExpectationHolder) catch unreachable;
             holder.* = .{
@@ -583,8 +586,8 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     .ref_counter = refcount_mock,
                 };
                 self.expectations.* = std.StringHashMap(std.DoublyLinkedList).init(allocator);
-                inline for (std.meta.fields(InterfaceType.VTable)) |field| {
-                    self.expectations.put(field.name, std.DoublyLinkedList{}) catch unreachable;
+                inline for (@typeInfo(InterfaceType.VTable).@"struct".field_names) |field_name| {
+                    self.expectations.put(field_name, std.DoublyLinkedList{}) catch unreachable;
                 }
             } else {
                 self.* = Self{
@@ -602,8 +605,8 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     .ref_counter = refcount_mock,
                 };
                 self.expectations.* = std.StringHashMap(std.DoublyLinkedList).init(allocator);
-                inline for (std.meta.fields(InterfaceType.VTable)) |field| {
-                    self.expectations.put(field.name, std.DoublyLinkedList{}) catch unreachable;
+                inline for (@typeInfo(InterfaceType.VTable).@"struct".field_names) |field_name| {
+                    self.expectations.put(field_name, std.DoublyLinkedList{}) catch unreachable;
                 }
             }
             return self;
@@ -613,8 +616,9 @@ pub fn MockInterface(comptime InterfaceType: type) type {
             var vtable: InterfaceType.VTable = undefined;
 
             // Generate wrapper functions for each VTable entry
-            inline for (std.meta.fields(InterfaceType.VTable)) |field| {
-                const field_type_info = @typeInfo(field.type);
+            const vtable_info = @typeInfo(InterfaceType.VTable).@"struct";
+            inline for (vtable_info.field_names, vtable_info.field_types) |field_name, field_ty| {
+                const field_type_info = @typeInfo(field_ty);
                 const fn_info = switch (field_type_info) {
                     .optional => blk: {
                         const child_info = @typeInfo(field_type_info.optional.child);
@@ -629,31 +633,62 @@ pub fn MockInterface(comptime InterfaceType: type) type {
                     else => @compileError("Expected function, function pointer, or optional function pointer in VTable"),
                 };
 
-                const SelfType = fn_info.params[0].type.?;
-                const ArgsType = fn_info.params[1].type.?;
+                const SelfType = fn_info.param_types[0].?;
+                const P = fn_info.param_types;
+                const R = fn_info.return_type.?;
+                const is_const = @typeInfo(SelfType).pointer.attrs.@"const";
+                const is_delete = std.mem.eql(u8, field_name, "delete");
 
-                // Determine self pointer type (const or mutable, opaque)
-                const is_const = @typeInfo(SelfType).pointer.is_const;
-
-                if (std.mem.eql(u8, field.name, "delete")) {
-                    const Wrapper = struct {
-                        fn call(ptr: SelfType, args: ArgsType) void {
-                            _ = args;
-                            const self: if (is_const) *const Self else *Self = @ptrCast(@alignCast(ptr));
+                const Body = struct {
+                    inline fn run(ptr: SelfType, args: anytype) R {
+                        const self: if (is_const) *const Self else *Self = @ptrCast(@alignCast(ptr));
+                        if (comptime is_delete) {
                             MockDestructorCall(self) catch unreachable;
+                            return;
                         }
-                    };
-                    @field(vtable, field.name) = &Wrapper.call;
-                } else {
-                    const Wrapper = struct {
-                        fn call(ptr: SelfType, args: ArgsType) fn_info.return_type.? {
-                            const self: if (is_const) *const Self else *Self = @ptrCast(@alignCast(ptr));
-                            return verify_mock_call(self, field.name, args, fn_info.return_type.?);
-                        }
-                    };
+                        return verify_mock_call(self, field_name, args, R);
+                    }
+                };
 
-                    @field(vtable, field.name) = &Wrapper.call;
-                }
+                const Wrapper = switch (P.len) {
+                    1 => struct {
+                        fn call(ptr: SelfType) R {
+                            return Body.run(ptr, .{});
+                        }
+                    },
+                    2 => struct {
+                        fn call(ptr: SelfType, a0: P[1].?) R {
+                            return Body.run(ptr, .{a0});
+                        }
+                    },
+                    3 => struct {
+                        fn call(ptr: SelfType, a0: P[1].?, a1: P[2].?) R {
+                            return Body.run(ptr, .{ a0, a1 });
+                        }
+                    },
+                    4 => struct {
+                        fn call(ptr: SelfType, a0: P[1].?, a1: P[2].?, a2: P[3].?) R {
+                            return Body.run(ptr, .{ a0, a1, a2 });
+                        }
+                    },
+                    5 => struct {
+                        fn call(ptr: SelfType, a0: P[1].?, a1: P[2].?, a2: P[3].?, a3: P[4].?) R {
+                            return Body.run(ptr, .{ a0, a1, a2, a3 });
+                        }
+                    },
+                    6 => struct {
+                        fn call(ptr: SelfType, a0: P[1].?, a1: P[2].?, a2: P[3].?, a3: P[4].?, a4: P[5].?) R {
+                            return Body.run(ptr, .{ a0, a1, a2, a3, a4 });
+                        }
+                    },
+                    7 => struct {
+                        fn call(ptr: SelfType, a0: P[1].?, a1: P[2].?, a2: P[3].?, a3: P[4].?, a4: P[5].?, a5: P[6].?) R {
+                            return Body.run(ptr, .{ a0, a1, a2, a3, a4, a5 });
+                        }
+                    },
+                    else => @compileError("mock: virtual method '" ++ field_name ++ "' has more parameters than supported; add another arity"),
+                };
+                @field(vtable, field_name) = &Wrapper.call;
             }
 
             return vtable;
