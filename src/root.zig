@@ -22,6 +22,10 @@ pub const ConstructInterface = @import("interface.zig").ConstructInterface;
 pub const VirtualCall = @import("interface.zig").VirtualCall;
 pub const DestructorCall = @import("interface.zig").DestructorCall;
 
+/// Shared-reference-count internals. Exposed so an embedder can install
+/// `refcount.placement_check` -- see its doc comment.
+pub const refcount = @import("interface.zig").refcount;
+
 pub const ConstructCountingInterface = @import("interface.zig").ConstructCountingInterface;
 pub const CountingInterfaceVirtualCall = @import("interface.zig").CountingInterfaceVirtualCall;
 pub const CountingInterfaceDestructorCall = @import("interface.zig").CountingInterfaceDestructorCall;

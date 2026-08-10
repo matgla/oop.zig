@@ -27,6 +27,83 @@ const MemFunctionsHolder = struct {
     dupe: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator) ?*anyopaque,
 };
 
+/// The shared reference count behind `ConstructCountingInterface`.
+///
+/// This is the backbone of every shared object's lifetime -- in YasOS, every
+/// `IFile`, `IDirectory` and `IFileSystem` -- so it is the one place in this
+/// library where a lost update frees memory that is still in use, or leaks
+/// memory that is not. It used to be a plain `r.* += 1` / `r.* -= 1`, which is
+/// a read-modify-write: two contexts can read the same value and both write
+/// back the same result, dropping one of the two operations. On one core that
+/// needs an interrupt to land between the load and the store; on two it needs
+/// nothing at all.
+///
+/// The counter is `i32` rather than something unsigned because `get_refcount`
+/// has always returned `i32`, and a negative value is a real diagnostic: it
+/// means a double release, which is worth seeing rather than wrapping.
+pub const refcount = struct {
+    /// Called on every freshly allocated counter, when installed.
+    ///
+    /// The hazard it exists for is invisible otherwise. A counter allocated
+    /// from a *process* heap can land in external PSRAM, and on the RP2350 the
+    /// global exclusive monitor does not cover the PSRAM window -- so the
+    /// exclusives below still succeed, against the core's local monitor, and
+    /// guarantee nothing between cores. No fault, no log line, just the
+    /// occasional freed-too-early object months later.
+    ///
+    /// This library has no business knowing a board's memory map, so the check
+    /// is injected: the kernel installs `kernel.sync.placement.assert_coherent`
+    /// here during boot. Left null, nothing is checked and behaviour is
+    /// unchanged.
+    pub var placement_check: ?*const fn (counter: *const i32) void = null;
+
+    /// A counter with exactly one owner.
+    pub fn init(counter: *i32) void {
+        if (placement_check) |check| check(counter);
+        // Plain: nothing else can reach a counter that has not been published
+        // yet, and publishing it is the caller's release.
+        counter.* = 1;
+    }
+
+    /// Take a reference.
+    ///
+    /// Monotonic is sufficient and is not an oversight. An increment is only
+    /// ever performed by a context that already holds a reference, so the
+    /// object is provably alive across it and there is nothing to order against.
+    pub fn acquire(counter: *i32) void {
+        _ = @atomicRmw(i32, counter, .Add, 1, .monotonic);
+    }
+
+    /// Drop a reference. Returns true if this was the last one and the caller
+    /// must now destroy the object.
+    ///
+    /// `acq_rel`, both halves load-bearing:
+    ///
+    ///   * **release**, so everything this context wrote through the object is
+    ///     visible to whoever ends up running the destructor;
+    ///   * **acquire**, so that when this *is* the last reference, every other
+    ///     context's writes are visible here before the destructor reads them.
+    ///
+    /// The textbook form puts the acquire in a standalone fence on the
+    /// last-reference branch only. This Zig has no `@fence`, and on Armv8-M
+    /// `acq_rel` lowers to `ldaex`/`stlex` with no extra barrier instruction, so
+    /// paying it on every decrement costs approximately nothing and removes a
+    /// subtlety from a function that must not have any.
+    pub fn release(counter: *i32) bool {
+        return @atomicRmw(i32, counter, .Sub, 1, .acq_rel) == 1;
+    }
+
+    /// The current count.
+    ///
+    /// Diagnostics only, and monotonic on purpose: any answer is stale by the
+    /// time the caller can act on it, so ordering would buy a false sense of
+    /// precision. The one value that is meaningful is the one `release`
+    /// returned, because that context owns the transition.
+    pub fn get(counter: *const i32) i32 {
+        return @atomicLoad(i32, counter, .monotonic);
+    }
+};
+
 fn deduce_type(info: anytype, object_type: anytype) type {
     if (info.pointer.attrs.@"const") {
         return *const object_type;
@@ -322,7 +399,10 @@ fn DeriveFromChain(comptime chain: []const type, comptime Derived: type) type {
 
             if (@hasField(InterfaceType, "__refcount")) {
                 refcounter = try allocator.create(i32);
-                refcounter.?.* = 1;
+                // `allocator` is whatever the caller handed in, and for a
+                // process-owned object that is the process heap -- see
+                // `refcount.placement_check`.
+                refcount.init(refcounter.?);
             }
 
             return InterfaceType.InterfaceType.__init_chain(object, chain[0 .. chain.len - 1], destroy, refcounter);
@@ -462,17 +542,20 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
         interface: SelfType = .{},
 
         pub fn __destructor(self: *Self) void {
-            if (self.__refcount != null) {
-                self.__refcount.?.* -= 1;
+            if (self.__refcount) |counter| {
+                // The decrement and the "was it the last one" test have to be
+                // the same operation. Read back separately -- as this did --
+                // two contexts releasing the last two references can both
+                // observe 0 and both destroy, or neither can and the object
+                // leaks.
+                if (!refcount.release(counter)) return;
 
-                if (self.__refcount.?.* == 0) {
-                    if (@hasField(VTable, "delete")) {
-                        self.__vtable.delete.?(self.__ptr);
-                    }
-                    if (self.__memfunctions) |destroy| {
-                        destroy.allocator.destroy(self.__refcount.?);
-                        destroy.destroy(self.__ptr, destroy.allocator);
-                    }
+                if (@hasField(VTable, "delete")) {
+                    self.__vtable.delete.?(self.__ptr);
+                }
+                if (self.__memfunctions) |destroy| {
+                    destroy.allocator.destroy(counter);
+                    destroy.destroy(self.__ptr, destroy.allocator);
                 }
             } else {
                 if (@hasField(VTable, "delete")) {
@@ -483,7 +566,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
 
         pub fn share(self: *Self) Self {
             if (self.__refcount) |r| {
-                r.* += 1;
+                refcount.acquire(r);
             }
 
             return self.*;
@@ -491,7 +574,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
 
         pub fn get_refcount(self: *Self) i32 {
             if (self.__refcount) |r| {
-                return r.*;
+                return refcount.get(r);
             }
             return 1;
         }
@@ -510,7 +593,7 @@ pub fn ConstructCountingInterface(comptime SelfType: type) type {
 
             if (self.__refcount != null) {
                 new.__refcount = try self.__memfunctions.?.allocator.create(i32);
-                new.__refcount.?.* = 1;
+                refcount.init(new.__refcount.?);
             }
 
             return new;
