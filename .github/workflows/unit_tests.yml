@@ -18,5 +18,7 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/tristanisham/zvm/master/install.sh | bash
           export PATH="$HOME/.zvm/bin:$HOME/.zvm/self:$PATH"
+          # Zig version is pinned by .minimum_zig_version in build.zig.zon.
           ./install_zig_with_zvm.sh
+          zig version
           zig build test --summary all

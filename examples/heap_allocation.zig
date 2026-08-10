@@ -110,9 +110,9 @@ pub fn draw_shape(shape: *const IShape) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{
+    var gpa: std.heap.DebugAllocator(.{
         .safety = true,
-    }){};
+    }) = .init;
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
     var shape1: IShape = try (Triangle.init(.{ .size = 10 })).interface.new(allocator);

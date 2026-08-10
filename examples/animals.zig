@@ -113,9 +113,9 @@ pub fn test_animal(animal: IAnimal) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{
+    var gpa: std.heap.DebugAllocator(.{
         .safety = true,
-    }){};
+    }) = .init;
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
