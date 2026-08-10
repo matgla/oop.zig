@@ -150,9 +150,9 @@ test "mock can invoke callback function" {
     defer obj.interface.delete();
 
     // // Test callback that computes the return value
-    // // Use std.meta.Tuple with empty array to get the correct type
+    // // Use @Tuple with empty array to get the correct type
     const areaCallback = struct {
-        fn call(ctx: ?*const anyopaque, args: std.meta.Tuple(&[_]type{})) anyerror!u32 {
+        fn call(ctx: ?*const anyopaque, args: @Tuple(&[_]type{})) anyerror!u32 {
             _ = ctx;
             _ = args;
             return 123;
@@ -167,7 +167,7 @@ test "mock can invoke callback function" {
 
     // Test callback with arguments
     const setSizeCallback = struct {
-        fn call(context: ?*const anyopaque, args: std.meta.Tuple(&[_]type{u32})) anyerror!void {
+        fn call(context: ?*const anyopaque, args: @Tuple(&[_]type{u32})) anyerror!void {
             try std.testing.expect(context != null);
             if (context) |c| {
                 const value: *const u32 = @ptrCast(@alignCast(c));
