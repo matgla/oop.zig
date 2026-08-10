@@ -17,6 +17,10 @@ jobs:
         shell: bash
         run: |
           curl https://raw.githubusercontent.com/tristanisham/zvm/master/install.sh | bash
+          # zvm's release tarball ships the binary as 0644, so the freshly
+          # extracted zvm is not executable and every call to it dies with
+          # "Permission denied". Harmless once upstream restores the mode bit.
+          chmod +x "$HOME/.zvm/self/zvm"
           export PATH="$HOME/.zvm/bin:$HOME/.zvm/self:$PATH"
           # Zig version is pinned by .minimum_zig_version in build.zig.zon.
           ./install_zig_with_zvm.sh
