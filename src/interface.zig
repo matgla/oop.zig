@@ -457,6 +457,11 @@ pub fn DeriveFromBase(comptime BaseType: anytype, comptime Derived: type) type {
 /// `args` is a tuple of arguments to pass to the method.
 /// `ReturnType` is the type of the return value of the method.
 pub fn VirtualCall(self: anytype, comptime name: []const u8, args: anytype, ReturnType: type) ReturnType {
+    // Both checks here are settled at compile time: a missing method is a
+    // "Pure virtual" error when the vtable is built, and `self` is the interface
+    // field by construction. In a safe build they keep a panic frame on the stack
+    // of every virtual call, and these nest deep under a syscall.
+    @setRuntimeSafety(false);
     const parent: decorate_with_const(@TypeOf(self), ConstructInterface(@TypeOf(self.*))) = @alignCast(@fieldParentPtr("interface", self));
     return @call(.auto, @field(parent.__vtable, name).?, .{parent.__ptr} ++ args);
 }
